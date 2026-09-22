@@ -48,6 +48,22 @@ export function renderForge(state: GameState): HTMLElement {
     },
   });
 
+  const modelSelect = h(
+    'select',
+    {
+      class: 'input',
+      value: state.generation.textModel,
+      disabled: busy || !state.you.isFacilitator,
+      onChange: (event: Event) => {
+        const model = (event.target as HTMLSelectElement).value;
+        void act('ai:model:set', { model });
+      },
+    },
+    ...state.generation.textModelOptions.map((option) =>
+      h('option', { value: option.id, selected: option.id === state.generation.textModel, text: option.label }),
+    ),
+  );
+
   const forge = async (): Promise<void> => {
     const keywords = draft.keywords
       .split(',')
@@ -84,7 +100,13 @@ export function renderForge(state: GameState): HTMLElement {
       busy ? h('span', { class: 'spinner', 'aria-label': 'forging' }) : null,
     ),
     state.generation.aiConfigured
-      ? null
+      ? field(
+          'AI text model',
+          modelSelect,
+          state.you.isFacilitator
+            ? 'Used for character and dungeon generation in this room. Portraits are local CSS/emoji cards, so no image model is called yet.'
+            : `Facilitator controls this. Current: ${state.generation.textModelLabel}. Portraits are local CSS/emoji cards.`,
+        )
       : h('p', {
           class: 'notice',
           text: 'No AI key configured on the server — heroes are forged by the local generator.',

@@ -23,7 +23,7 @@ import {
 } from './game.js';
 import { generateCharacters, generateLevel } from './generate.js';
 import { commitFile, readGithubConfig } from './github.js';
-import { readOpenRouterConfig } from './openrouter.js';
+import { isAllowedOpenRouterModel, readOpenRouterConfig, selectOpenRouterModel } from './openrouter.js';
 import { RATE_LIMITS, rateLimit } from './ratelimit.js';
 import { buildCommitMessage, buildSavePath, buildSnapshot } from './snapshot.js';
 import { isFacilitator, topicsOf, type PlayerRecord, type Room, type RoomStore } from './state.js';
@@ -211,7 +211,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
         return fail(ack, 'The forge is overheating. Wait a few minutes before generating again.');
       }
 
-      const config = readOpenRouterConfig().config ?? null;
+      const config = readOpenRouterConfig(process.env, found.room.aiTextModel).config ?? null;
       found.room.generation = { busy: true, message: `Forging ${found.player.name}'s hero…` };
       pushState(io, found.room);
 
@@ -222,6 +222,28 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       found.player.character = characters[0] ?? null;
       found.player.ready = true;
       found.room.generation = { busy: false, message: note };
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+    });
+
+    socket.on('ai:model:set', (payload: unknown, ack: Ack<ActionResult>) => {
+      const found = facilitatorOnly(ack);
+      if (!found) return;
+      if (found.room.generation.busy) return fail(ack, 'Wait until the current generation is finished.');
+      if (found.room.phase !== 'forge' && found.room.phase !== 'topics') {
+        return fail(ack, 'Choose the AI model before the dungeon is generated.');
+      }
+
+      const model = sanitizeSingleLine((payload as { model?: unknown })?.model, 120);
+      if (!isAllowedOpenRouterModel(model)) {
+        return fail(ack, 'That model is not in the server allowlist.');
+      }
+
+      found.room.aiTextModel = selectOpenRouterModel(model).id;
+      found.room.generation = {
+        busy: false,
+        message: `AI text model set to ${selectOpenRouterModel(model).label}.`,
+      };
       reply(ack, { ok: true });
       pushState(io, found.room);
     });
@@ -314,7 +336,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       room.generation = { busy: true, message: 'Reading the post-its, sharpening their teeth…' };
       pushState(io, room);
 
-      const config = readOpenRouterConfig().config ?? null;
+      const config = readOpenRouterConfig(process.env, room.aiTextModel).config ?? null;
       const level = await generateLevel(allTopics(room), config);
 
       room.level = level;
@@ -465,7 +487,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
 
       const now = new Date();
-      const model = readOpenRouterConfig().config?.model ?? null;
+      const model = readOpenRouterConfig(process.env, found.room.aiTextModel).config?.model ?? null;
       const snapshot = buildSnapshot(found.room, now, model);
       const path = buildSavePath(found.room.code, now);
       const result = await commitFile({
@@ -504,7 +526,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
         return;
       }
       const now = new Date();
-      const model = readOpenRouterConfig().config?.model ?? null;
+      const model = readOpenRouterConfig(process.env, found.room.aiTextModel).config?.model ?? null;
       reply(ack, {
         ok: true,
         filename: buildSavePath(found.room.code, now).split('/').pop() ?? 'retro.json',

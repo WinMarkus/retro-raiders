@@ -41,6 +41,7 @@ export interface Room {
   resolutions: Resolution[];
   attackCollected: number;
   attackSpent: number;
+  aiTextModel: string | null;
   generation: { busy: boolean; message: string | null };
   save: SaveState;
 }
@@ -86,6 +87,7 @@ function emptyRoom(code: string): Room {
     resolutions: [],
     attackCollected: 0,
     attackSpent: 0,
+    aiTextModel: null,
     generation: { busy: false, message: null },
     save: { status: 'idle', url: null, message: null },
   };

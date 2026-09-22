@@ -127,6 +127,11 @@ export interface Summary {
   actionItems: string[];
 }
 
+export interface AiModelOption {
+  id: string;
+  label: string;
+}
+
 /** The per-player view of a room. Never contains authorship of a topic. */
 export interface GameState {
   code: string;
@@ -157,6 +162,11 @@ export interface GameState {
     busy: boolean;
     message: string | null;
     aiConfigured: boolean;
+    textModel: string;
+    textModelLabel: string;
+    textModelOptions: AiModelOption[];
+    avatarImages: 'local-css';
+    imageModel: string | null;
   };
   githubConfigured: boolean;
   canSave: boolean;

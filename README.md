@@ -75,7 +75,10 @@ The server binds to `process.env.PORT` (default `3000`) and `HOST` (default `0.0
 |----------|----------|---------|
 | `PORT` | no | HTTP port. Render sets this for you. |
 | `OPENROUTER_API_KEY` | no | Enables AI generation. Without it the local generator is used. |
-| `OPENROUTER_MODEL` | no | Defaults to `openai/gpt-4o-mini`. |
+| `OPENROUTER_TEXT_MODEL` | no | Default text model, used when a room has not chosen another option. Defaults to `openai/gpt-4o-mini`. |
+| `OPENROUTER_MODEL` | no | Legacy alias for `OPENROUTER_TEXT_MODEL`; kept so old deployments still work. |
+| `OPENROUTER_MODEL_OPTIONS` | no | Comma-separated allowlist for the facilitator dropdown. Use `model-id\|Label` for nicer labels. |
+| `OPENROUTER_IMAGE_MODEL` | no | Reserved for a later real avatar/image pipeline. Current portraits are local CSS/emoji cards. |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | no | Attribution headers OpenRouter shows on its dashboard. |
 | `GITHUB_TOKEN` | only for saving | Fine-grained token with **Contents: Read and write**. |
 | `GITHUB_OWNER` | only for saving | User or organisation that owns the target repo. |
@@ -94,6 +97,15 @@ The server calls `POST https://openrouter.ai/api/v1/chat/completions` with
 `response_format: json_object`, a system prompt describing the exact JSON shape, and a
 45-second timeout. Two calls exist: one per player for the character, one per room for the
 level. AI calls are rate limited to six per room per ten minutes.
+
+The facilitator can choose the room's text model from the server-side allowlist exposed by
+`OPENROUTER_MODEL_OPTIONS`. That selected model is used for both character generation and
+level generation in that room. The browser cannot send arbitrary model names: anything not
+in the allowlist is rejected server-side.
+
+Text and images are deliberately separate. Today OpenRouter is only used for structured text
+generation. Character portraits are CSS/emoji cards generated locally from the character
+data, plus an `avatarPrompt` saved in the snapshot for a later real image pipeline.
 
 **The model's answer is treated exactly like player input.** Nothing it returns is used as
 given:
@@ -176,7 +188,8 @@ health check on `/health`.
 
 1. Push this repository to GitHub.
 2. Render dashboard → **New** → **Blueprint** → pick the repository → **Apply**.
-3. In the service's **Environment** tab add `OPENROUTER_API_KEY` (optional) and
+3. In the service's **Environment** tab add `OPENROUTER_API_KEY` (optional) and optionally
+   tune `OPENROUTER_TEXT_MODEL` / `OPENROUTER_MODEL_OPTIONS`. Also add
    `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO` (optional). They are `sync: false` in the
    blueprint so they are never stored in git. Render injects `PORT` automatically.
 

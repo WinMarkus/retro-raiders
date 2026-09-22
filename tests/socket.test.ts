@@ -20,7 +20,10 @@ const MANAGED_ENV = [
   'GITHUB_REPO',
   'GITHUB_BRANCH',
   'OPENROUTER_API_KEY',
+  'OPENROUTER_TEXT_MODEL',
   'OPENROUTER_MODEL',
+  'OPENROUTER_MODEL_OPTIONS',
+  'OPENROUTER_IMAGE_MODEL',
 ] as const;
 const originalEnv: Record<string, string | undefined> = {};
 
@@ -45,6 +48,7 @@ afterAll(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  for (const key of MANAGED_ENV) delete process.env[key];
 });
 
 /** The server pushes `state` before it answers the ack, so buffer broadcasts. */
@@ -167,6 +171,26 @@ describe('the flow', () => {
     expect(state.you.character?.source).toBe('fallback');
     expect(state.you.character?.playerName).toBe('Ada');
     expect(state.generation.aiConfigured).toBe(false);
+    expect(state.generation.textModelOptions.length).toBeGreaterThan(1);
+    expect(state.generation.textModel).toBe(state.generation.textModelOptions[0]!.id);
+  });
+
+  it('lets only the facilitator choose an allowed AI text model', async () => {
+    process.env.OPENROUTER_MODEL_OPTIONS = 'openai/gpt-4o-mini|Cheap,z-ai/glm-5.3-flash|GLM';
+    const { socket: host, code } = await joinedRoom('Ada');
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+
+    const denied = await emit<ActionResult>(guest, 'ai:model:set', { model: 'z-ai/glm-5.3-flash' });
+    expect(denied.ok).toBe(false);
+
+    const unknown = await emit<ActionResult>(host, 'ai:model:set', { model: 'made-up/model' });
+    expect(unknown.ok).toBe(false);
+
+    const selected = await emit<ActionResult>(host, 'ai:model:set', { model: 'z-ai/glm-5.3-flash' });
+    expect(selected.ok).toBe(true);
+    const state = await nextState(host, (value) => value.generation.textModel === 'z-ai/glm-5.3-flash');
+    expect(state.generation.textModelLabel).toBe('GLM');
   });
 
   it('refuses a check-in that says nothing', async () => {
