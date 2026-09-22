@@ -88,6 +88,7 @@ export interface Level {
 export interface Resolution {
   enemyId: string;
   enemyName: string;
+  story: string;
   treatment: string;
   owner: string | null;
   reviewBy: string;
@@ -112,6 +113,7 @@ export interface EncounterState {
   enemyId: string;
   openedAt: number;
   party: string[];
+  story: string;
 }
 
 export interface SaveState {

@@ -430,6 +430,7 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
         h('h3', { class: 'modal__subtitle', text: 'Born from' }),
         h('ul', {}, ...enemy.sourceTopics.map((topic) => h('li', { text: topic }))),
       ),
+      state.encounter?.story ? h('p', { class: 'modal__story', text: state.encounter.story }) : null,
       h('p', {
         class: 'modal__party',
         text: `Locked on: ${state.encounter?.party.join(', ') ?? ''}`,

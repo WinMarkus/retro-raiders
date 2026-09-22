@@ -59,6 +59,8 @@ describe('locking on', () => {
     expect(room.encounter?.enemyId).toBe(enemy.id);
     expect(findEnemy(room, enemy.id)?.status).toBe('locked');
     expect(room.encounter?.party).toEqual(['Ada', 'Grace', 'Linus']);
+    expect(room.encounter?.story).toContain(enemy.name);
+    expect(room.encounter?.story).toContain('Strength');
   });
 
   it('recalculates the majority when fewer players are connected', () => {
@@ -183,6 +185,8 @@ describe('resolving an enemy', () => {
     expect(room.attackSpent).toBe(4);
     expect(attackAvailable(room)).toBe(2);
     expect(resolution.party).toEqual(['Ada', 'Grace', 'Linus']);
+    expect(resolution.story).toContain(enemy.name);
+    expect(resolution.story).toContain('4 attack points');
     expect(players[0]!.lockedEnemyId).toBeNull();
   });
 

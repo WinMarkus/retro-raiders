@@ -58,6 +58,7 @@ export function renderVictory(state: GameState): HTMLElement {
                 'li',
                 { class: 'result' },
                 h('h3', { class: 'result__title', text: `❄ ${resolution.enemyName}` }),
+                resolution.story ? h('p', { class: 'result__story', text: resolution.story }) : null,
                 h('p', { class: 'result__text', text: resolution.treatment }),
                 h('p', {
                   class: 'result__meta',

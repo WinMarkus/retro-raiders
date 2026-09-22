@@ -1085,6 +1085,17 @@ a.link {
   margin: 0;
 }
 
+.modal__story,
+.result__story {
+  margin: 0;
+  border-left: 3px solid var(--gold);
+  padding: 0.55rem 0.75rem;
+  background: rgba(242, 190, 83, 0.08);
+  color: var(--parchment);
+  font-style: italic;
+  line-height: 1.45;
+}
+
 .modal__subtitle {
   font-size: 0.78rem;
   text-transform: uppercase;
@@ -1200,6 +1211,10 @@ a.link {
 
 .result__text {
   margin: 0.2rem 0;
+}
+
+.result__story {
+  margin-top: 0.35rem;
 }
 
 .result__meta {

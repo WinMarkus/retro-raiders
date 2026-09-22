@@ -42,6 +42,31 @@ export function encounterThreshold(room: Room): number {
   return Math.max(1, Math.floor(connected / 2) + 1);
 }
 
+function partyLine(room: Room, ids: string[]): string {
+  const fighters = ids
+    .map((id) => room.players.get(id))
+    .filter((player): player is PlayerRecord => Boolean(player))
+    .map((player) => {
+      const character = player.character;
+      return character ? `${character.characterName}, ${character.className}` : player.name;
+    });
+  if (fighters.length === 0) return 'The party';
+  if (fighters.length === 1) return fighters[0]!;
+  return `${fighters.slice(0, -1).join(', ')} and ${fighters[fighters.length - 1]}`;
+}
+
+function encounterStory(room: Room, enemy: Enemy): string {
+  const fighters = partyLine(room, enemy.lockedBy);
+  const source = enemy.sourceTopics.slice(0, 2).join(' and ') || 'the sprint backlog';
+  return `${fighters} step into the torchlight as ${enemy.name} rises from ${source}. Strength ${enemy.strength}/5 - name the real problem, spend the points, and freeze it in place.`;
+}
+
+function victoryStory(resolution: Resolution): string {
+  const cost = `${resolution.attackSpent} attack point${resolution.attackSpent === 1 ? '' : 's'}`;
+  const owner = resolution.owner ? ` ${resolution.owner} carries the next move.` : '';
+  return `${resolution.enemyName} cracks under a clear treatment and ${cost}. The room has a way forward before the ice settles.${owner}`;
+}
+
 export function clearLock(room: Room, player: PlayerRecord): void {
   if (!player.lockedEnemyId) return;
   const enemy = findEnemy(room, player.lockedEnemyId);
@@ -81,6 +106,7 @@ export function lockOn(room: Room, player: PlayerRecord, enemyId: string): LockO
       party: enemy.lockedBy
         .map((id) => room.players.get(id)?.name)
         .filter((name): name is string => Boolean(name)),
+      story: encounterStory(room, enemy),
     };
     return { ok: true, opened: true };
   }
@@ -100,6 +126,7 @@ export function resolveEnemy(
   const resolution: Resolution = {
     enemyId: enemy.id,
     enemyName: enemy.name,
+    story: '',
     treatment: input.treatment,
     owner: input.owner || null,
     reviewBy: input.reviewBy,
@@ -107,6 +134,7 @@ export function resolveEnemy(
     party: party.length > 0 ? party : ['the party'],
     resolvedAt: Date.now(),
   };
+  resolution.story = victoryStory(resolution);
 
   room.resolutions.push(resolution);
   room.attackSpent += input.attackPoints;

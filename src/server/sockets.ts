@@ -416,8 +416,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       reply(ack, { ok: true });
       pushState(io, found.room);
       if (outcome.opened) {
-        const enemy = findEnemy(found.room, enemyId);
-        toast(io, found.room, `The party engages ${enemy?.name ?? 'the enemy'}.`);
+        toast(io, found.room, found.room.encounter?.story ?? 'The party engages the enemy.');
       }
     });
 
@@ -460,9 +459,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       toast(
         io,
         room,
-        `${enemy.name} is frozen. ${resolution.attackSpent} attack point${
-          resolution.attackSpent === 1 ? '' : 's'
-        } spent.`,
+        resolution.story,
       );
     });
 
