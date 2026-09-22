@@ -27,11 +27,13 @@ import {
   isAllowedOpenRouterModel,
   readOpenRouterConfig,
   readOpenRouterImageConfig,
+  readOpenRouterStoryConfig,
   selectOpenRouterModel,
 } from './openrouter.js';
 import { RATE_LIMITS, rateLimit } from './ratelimit.js';
 import { buildCommitMessage, buildSavePath, buildSnapshot } from './snapshot.js';
 import { isFacilitator, topicsOf, type PlayerRecord, type Room, type RoomStore } from './state.js';
+import { generateEncounterStory, generateVictoryStory } from './stories.js';
 import { SAVE_PLAYER_NAME, buildState } from './view.js';
 import {
   clampPoint,
@@ -403,7 +405,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       }
     });
 
-    socket.on('enemy:lock', (payload: unknown, ack: Ack<ActionResult>) => {
+    socket.on('enemy:lock', async (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (limited('action', ack)) return;
@@ -416,7 +418,15 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       reply(ack, { ok: true });
       pushState(io, found.room);
       if (outcome.opened) {
-        toast(io, found.room, found.room.encounter?.story ?? 'The party engages the enemy.');
+        const enemy = findEnemy(found.room, enemyId);
+        if (enemy && found.room.encounter) {
+          const story = await generateEncounterStory(found.room, enemy, readOpenRouterStoryConfig());
+          found.room.encounter.story = story;
+          pushState(io, found.room);
+          toast(io, found.room, story);
+        } else {
+          toast(io, found.room, 'The party engages the enemy.');
+        }
       }
     });
 
@@ -437,7 +447,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('encounter:resolve', (payload: unknown, ack: Ack<ActionResult>) => {
+    socket.on('encounter:resolve', async (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (limited('text', ack)) return;
@@ -454,13 +464,10 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       if (!validation.ok) return fail(ack, validation.errors.join(' '));
 
       const resolution = resolveEnemy(room, enemy, validation.value);
+      resolution.story = await generateVictoryStory(resolution, readOpenRouterStoryConfig());
       reply(ack, { ok: true });
       pushState(io, room);
-      toast(
-        io,
-        room,
-        resolution.story,
-      );
+      toast(io, room, resolution.story);
     });
 
     /* ----------------------------------------------------------- save -- */

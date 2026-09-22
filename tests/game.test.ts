@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Topic } from '../src/shared/types.js';
 import {
   abandonEncounter,
@@ -12,7 +12,9 @@ import {
   resolveEnemy,
 } from '../src/server/game.js';
 import { fallbackLevel } from '../src/server/generate.js';
+import type { OpenRouterStoryConfig } from '../src/server/openrouter.js';
 import { RoomStore, type PlayerRecord, type Room } from '../src/server/state.js';
+import { generateEncounterStory, generateVictoryStory } from '../src/server/stories.js';
 import { validateTreatment } from '../src/server/validation.js';
 
 let counter = 0;
@@ -24,6 +26,25 @@ function topic(title: string, type: Topic['type'] = 'bad', intensity = 3): Topic
 let store: RoomStore;
 let room: Room;
 let players: PlayerRecord[];
+
+const storyConfig: OpenRouterStoryConfig = {
+  apiKey: 'sk-test-key',
+  model: 'google/gemini-2.5-flash-lite',
+  modelLabel: 'Story model',
+  referer: 'https://example.test',
+  title: 'test',
+};
+
+function storyResponse(story: string): typeof fetch {
+  return vi.fn(async () =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({ story }) } }] }),
+      text: async () => '',
+    }) as unknown as Response,
+  ) as unknown as typeof fetch;
+}
 
 function addPlayers(names: string[]): PlayerRecord[] {
   return names.map((name, index) => {
@@ -223,6 +244,37 @@ describe('resolving an enemy', () => {
     expect(enemy.status).toBe('active');
     expect(enemy.lockedBy).toEqual([]);
     expect(room.encounter).toBeNull();
+  });
+});
+
+describe('battle stories', () => {
+  it('can replace the encounter intro with a cheap AI story', async () => {
+    const enemy = room.level!.enemies[0]!;
+    for (const player of players.slice(0, 3)) lockOn(room, player, enemy.id);
+
+    const story = await generateEncounterStory(
+      room,
+      enemy,
+      storyConfig,
+      storyResponse('Carl raises the torch while the Review Hydra drags three blocked pull requests from the mist.'),
+    );
+
+    expect(story).toContain('Review Hydra');
+  });
+
+  it('falls back when the story model is unavailable', async () => {
+    const enemy = room.level!.enemies[0]!;
+    for (const player of players.slice(0, 3)) lockOn(room, player, enemy.id);
+    const resolution = resolveEnemy(room, enemy, {
+      treatment: 'Reviewers pick up PRs in the morning slot.',
+      owner: 'Lena',
+      reviewBy: 'next retro',
+      attackPoints: 2,
+    });
+
+    const story = await generateVictoryStory(resolution, null);
+    expect(story).toContain(enemy.name);
+    expect(story).toContain('2 attack points');
   });
 });
 

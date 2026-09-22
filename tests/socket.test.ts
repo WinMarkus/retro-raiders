@@ -24,6 +24,7 @@ const MANAGED_ENV = [
   'OPENROUTER_MODEL',
   'OPENROUTER_MODEL_OPTIONS',
   'OPENROUTER_IMAGE_MODEL',
+  'OPENROUTER_STORY_MODEL',
 ] as const;
 const originalEnv: Record<string, string | undefined> = {};
 

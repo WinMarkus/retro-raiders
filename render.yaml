@@ -24,6 +24,8 @@ services:
       # Optional paid avatar generation. Leave unset for local CSS/emoji avatars.
       - key: OPENROUTER_IMAGE_MODEL
         sync: false
+      - key: OPENROUTER_STORY_MODEL
+        value: google/gemini-2.5-flash-lite
       # Optional. Without these Markus gets "Download JSON" instead of saving.
       # Set the values in the Render dashboard, never in this file.
       - key: GITHUB_TOKEN

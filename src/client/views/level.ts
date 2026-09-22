@@ -24,6 +24,7 @@ let target: Point | null = null;
 let lastEmit = 0;
 let frame = 0;
 let openEncounterId: string | null = null;
+let openEncounterStory: string | null = null;
 const keys = new Set<string>();
 
 /* --------------------------------------------------------- geometry -- */
@@ -128,6 +129,7 @@ export function stopLevelLoop(): void {
   window.removeEventListener('party:moved', onPartyMoved);
   view = null;
   openEncounterId = null;
+  openEncounterStory = null;
 }
 
 /* ----------------------------------------------------------- nodes -- */
@@ -329,12 +331,20 @@ function update(current: LevelView, state: GameState): void {
     ),
   );
 
+  if (state.encounter && openEncounterId === state.encounter.enemyId && openEncounterStory !== state.encounter.story) {
+    openEncounterStory = state.encounter.story;
+    const story = current.modalHost.querySelector('.modal__story');
+    if (story) story.textContent = state.encounter.story;
+  }
+
   if (state.encounter && openEncounterId !== state.encounter.enemyId) {
     openEncounterId = state.encounter.enemyId;
+    openEncounterStory = state.encounter.story;
     const enemy = level.enemies.find((candidate) => candidate.id === state.encounter!.enemyId);
     if (enemy) mount(current.modalHost, encounterModal(enemy, state));
   } else if (!state.encounter && openEncounterId) {
     openEncounterId = null;
+    openEncounterStory = null;
     mount(current.modalHost);
   }
 }

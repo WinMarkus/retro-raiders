@@ -42,7 +42,7 @@ export function encounterThreshold(room: Room): number {
   return Math.max(1, Math.floor(connected / 2) + 1);
 }
 
-function partyLine(room: Room, ids: string[]): string {
+export function partyLine(room: Room, ids: string[]): string {
   const fighters = ids
     .map((id) => room.players.get(id))
     .filter((player): player is PlayerRecord => Boolean(player))
@@ -55,13 +55,13 @@ function partyLine(room: Room, ids: string[]): string {
   return `${fighters.slice(0, -1).join(', ')} and ${fighters[fighters.length - 1]}`;
 }
 
-function encounterStory(room: Room, enemy: Enemy): string {
+export function encounterStory(room: Room, enemy: Enemy): string {
   const fighters = partyLine(room, enemy.lockedBy);
   const source = enemy.sourceTopics.slice(0, 2).join(' and ') || 'the sprint backlog';
   return `${fighters} step into the torchlight as ${enemy.name} rises from ${source}. Strength ${enemy.strength}/5 - name the real problem, spend the points, and freeze it in place.`;
 }
 
-function victoryStory(resolution: Resolution): string {
+export function victoryStory(resolution: Resolution): string {
   const cost = `${resolution.attackSpent} attack point${resolution.attackSpent === 1 ? '' : 's'}`;
   const owner = resolution.owner ? ` ${resolution.owner} carries the next move.` : '';
   return `${resolution.enemyName} cracks under a clear treatment and ${cost}. The room has a way forward before the ice settles.${owner}`;

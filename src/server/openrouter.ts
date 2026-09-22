@@ -11,6 +11,8 @@ export interface OpenRouterImageConfig {
   model: string;
 }
 
+export interface OpenRouterStoryConfig extends OpenRouterConfig {}
+
 export interface OpenRouterModelOption {
   id: string;
   label: string;
@@ -25,6 +27,7 @@ export interface OpenRouterConfigResult {
 export const DEFAULT_TEXT_MODEL = 'openai/gpt-4o-mini';
 export const DEFAULT_MODEL = DEFAULT_TEXT_MODEL;
 export const DEFAULT_IMAGE_MODEL = 'openai/gpt-image-2';
+export const DEFAULT_STORY_MODEL = 'google/gemini-2.5-flash-lite';
 
 export const BUILTIN_TEXT_MODEL_OPTIONS: OpenRouterModelOption[] = [
   { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini - paid cheap solid default' },
@@ -119,6 +122,19 @@ export function readOpenRouterImageConfig(env: NodeJS.ProcessEnv = process.env):
   const model = sanitizeModelId(env.OPENROUTER_IMAGE_MODEL ?? '');
   if (!apiKey || !model) return null;
   return { apiKey, model };
+}
+
+export function readOpenRouterStoryConfig(env: NodeJS.ProcessEnv = process.env): OpenRouterStoryConfig | null {
+  const apiKey = (env.OPENROUTER_API_KEY ?? '').trim();
+  if (!apiKey) return null;
+  const model = sanitizeModelId(env.OPENROUTER_STORY_MODEL ?? DEFAULT_STORY_MODEL) || DEFAULT_STORY_MODEL;
+  return {
+    apiKey,
+    model,
+    modelLabel: model,
+    referer: (env.OPENROUTER_SITE_URL ?? '').trim() || 'https://github.com/WinMarkus/retro-raiders',
+    title: (env.OPENROUTER_APP_NAME ?? '').trim() || 'Retro Raiders',
+  };
 }
 
 /** Keeps the key out of logs, error messages and anything that reaches a client. */
