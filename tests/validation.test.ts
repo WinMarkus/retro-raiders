@@ -1,32 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { LIMITS } from '../src/shared/constants.js';
+import { LIMITS, MAP } from '../src/shared/constants.js';
 import {
-  isCardIndex,
-  isCategory,
-  isClassId,
-  isEnergy,
-  isForgePoints,
+  clampInt,
+  clampPoint,
+  clampScale,
   isId,
-  isTokenAmount,
+  isTopicType,
   isValidPlayerName,
   normalizeRoomCode,
   sanitizeSingleLine,
   sanitizeText,
-  validateProposal,
+  validateCheckIn,
+  validateTopic,
+  validateTreatment,
 } from '../src/server/validation.js';
 
 describe('text sanitising', () => {
   it('defuses HTML and script payloads', () => {
-    const dirty = '<script>alert("pwned")</script><img src=x onerror=alert(1)>';
-    const clean = sanitizeText(dirty, LIMITS.cardText);
+    const clean = sanitizeText('<script>alert("pwned")</script><img src=x onerror=alert(1)>', 220);
     expect(clean).not.toContain('<');
     expect(clean).not.toContain('>');
     expect(clean).toContain('script');
   });
 
   it('cuts text at the limit and trims the edges', () => {
-    const long = `   ${'a'.repeat(500)}   `;
-    expect(sanitizeText(long, LIMITS.cardText)).toHaveLength(LIMITS.cardText);
+    expect(sanitizeText(`   ${'a'.repeat(500)}   `, 220)).toHaveLength(220);
   });
 
   it('drops control characters and collapses runaway whitespace', () => {
@@ -59,71 +57,96 @@ describe('field guards', () => {
     expect(normalizeRoomCode(12345)).toBe('');
   });
 
-  it('rejects out-of-range values', () => {
-    expect(isEnergy(3)).toBe(true);
-    expect(isEnergy(0)).toBe(false);
-    expect(isEnergy(6)).toBe(false);
-    expect(isEnergy(2.5)).toBe(false);
-    expect(isTokenAmount(3)).toBe(true);
-    expect(isTokenAmount(4)).toBe(false);
-    expect(isTokenAmount(-1)).toBe(false);
-    expect(isForgePoints(LIMITS.forgePoints)).toBe(true);
-    expect(isForgePoints(LIMITS.forgePoints + 1)).toBe(false);
-    expect(isCardIndex(LIMITS.cardsPerCategory)).toBe(false);
-    expect(isCardIndex(0)).toBe(true);
-    expect(isCategory('loot')).toBe(true);
-    expect(isCategory('boss')).toBe(false);
-    expect(isClassId('test-mage')).toBe(true);
-    expect(isClassId('necromancer')).toBe(false);
-    expect(isId('m-1a2b3c')).toBe(true);
+  it('rejects ids that try to be paths', () => {
+    expect(isId('enemy-review-hydra-0')).toBe(true);
     expect(isId('../../etc/passwd')).toBe(false);
     expect(isId('')).toBe(false);
   });
+
+  it('clamps numbers into their range', () => {
+    expect(clampScale(3)).toBe(3);
+    expect(clampScale(99)).toBe(5);
+    expect(clampScale(-4)).toBe(1);
+    expect(clampScale('nonsense')).toBe(3);
+    expect(clampInt(7, 0, 5, 0)).toBe(5);
+    expect(isTopicType('good')).toBe(true);
+    expect(isTopicType('terrible')).toBe(false);
+  });
+
+  it('keeps every position inside the map', () => {
+    const far = clampPoint({ x: 99999, y: -99999 });
+    expect(far.x).toBeLessThanOrEqual(MAP.width);
+    expect(far.y).toBeGreaterThanOrEqual(0);
+    const nonsense = clampPoint('over there');
+    expect(Number.isFinite(nonsense.x)).toBe(true);
+  });
 });
 
-describe('experiment validation', () => {
-  it('accepts a concrete experiment', () => {
-    const result = validateProposal({
-      title: 'Pair on the flaky payment specs every Tuesday',
-      description: 'Two people, one hour.',
-      signal: 'No red build caused by payment specs for two weeks',
-      owner: 'Lena',
-      reviewBy: 'in 2 sprints',
+describe('check-in validation', () => {
+  it('accepts a filled-in check-in and trims the keyword list', () => {
+    const result = validateCheckIn({
+      energy: 9,
+      pressure: 2,
+      satisfaction: 4,
+      mood: 'Busy but fine',
+      keywords: ['coffee', '', 'a', 'b', 'c', 'd', 'e', 'f'],
     });
     expect(result.ok).toBe(true);
-    expect(result.errors).toEqual([]);
+    expect(result.value.energy).toBe(5);
+    expect(result.value.keywords.length).toBeLessThanOrEqual(LIMITS.maxKeywords);
   });
 
-  it('needs a title, an observable sign and a review date', () => {
-    const result = validateProposal({ title: 'Do', description: '', signal: 'ok', owner: '', reviewBy: '' });
-    expect(result.ok).toBe(false);
-    expect(result.errors).toHaveLength(3);
+  it('needs a few words about the sprint', () => {
+    expect(validateCheckIn({ mood: '' }).ok).toBe(false);
   });
+});
 
-  it('rejects vague actions such as "communicate better"', () => {
-    for (const title of ['Communicate better', 'communicate better in standup', 'Improve communication']) {
-      const result = validateProposal({
-        title,
-        description: '',
-        signal: 'People feel better about it',
-        reviewBy: 'next month',
-        owner: '',
-      });
-      expect(result.ok).toBe(false);
-      expect(result.errors.join(' ')).toContain('too vague');
-    }
-  });
-
-  it('sanitises the fields it accepts', () => {
-    const result = validateProposal({
-      title: '<b>Pair on the payment specs</b>',
-      description: 'x'.repeat(1000),
-      signal: 'No red build for two weeks',
-      owner: 'Lena',
-      reviewBy: '2026-10-15',
+describe('topic validation', () => {
+  it('accepts a good topic and sanitises it', () => {
+    const result = validateTopic({
+      type: 'good',
+      title: '<b>Pairing helped</b>',
+      description: 'x'.repeat(500),
+      intensity: 4,
     });
     expect(result.ok).toBe(true);
     expect(result.value.title).not.toContain('<');
-    expect(result.value.description).toHaveLength(LIMITS.proposalDescription);
+    expect(result.value.description).toHaveLength(LIMITS.topicDescription);
+  });
+
+  it('needs a real title and a real type', () => {
+    expect(validateTopic({ type: 'good', title: 'ab' }).ok).toBe(false);
+    expect(validateTopic({ type: 'chaotic', title: 'Review takes too long' }).ok).toBe(false);
+  });
+});
+
+describe('treatment validation', () => {
+  it('accepts a concrete treatment', () => {
+    const result = validateTreatment(
+      {
+        treatment: 'Reviewers pick up PRs in the morning slot before new work.',
+        owner: 'Lena',
+        reviewBy: 'in 2 sprints',
+        attackPoints: 3,
+      },
+      5,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.value.attackPoints).toBe(3);
+  });
+
+  it('rejects a treatment that says nothing', () => {
+    expect(validateTreatment({ treatment: 'fix it' }, 5).ok).toBe(false);
+    const vague = validateTreatment({ treatment: 'communicate better' }, 5);
+    expect(vague.ok).toBe(false);
+    expect(vague.errors.join(' ')).toContain('too vague');
+  });
+
+  it('defaults the review moment to the next retro', () => {
+    const result = validateTreatment(
+      { treatment: 'Split the billing service into two clear owners.' },
+      5,
+    );
+    expect(result.value.reviewBy).toBe('next retro');
   });
 });

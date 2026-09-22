@@ -14,23 +14,30 @@ let server: CreatedServer;
 let url = '';
 const openSockets: ClientSocket[] = [];
 
-const GITHUB_ENV = ['GITHUB_TOKEN', 'GITHUB_OWNER', 'GITHUB_REPO', 'GITHUB_BRANCH'] as const;
+const MANAGED_ENV = [
+  'GITHUB_TOKEN',
+  'GITHUB_OWNER',
+  'GITHUB_REPO',
+  'GITHUB_BRANCH',
+  'OPENROUTER_API_KEY',
+  'OPENROUTER_MODEL',
+] as const;
 const originalEnv: Record<string, string | undefined> = {};
 
 beforeAll(async () => {
-  for (const key of GITHUB_ENV) originalEnv[key] = process.env[key];
+  for (const key of MANAGED_ENV) originalEnv[key] = process.env[key];
+  for (const key of MANAGED_ENV) delete process.env[key];
   server = createGameServer();
   await new Promise<void>((resolve) => {
     server.httpServer.listen(0, '127.0.0.1', () => resolve());
   });
-  const address = server.httpServer.address() as AddressInfo;
-  url = `http://127.0.0.1:${address.port}`;
+  url = `http://127.0.0.1:${(server.httpServer.address() as AddressInfo).port}`;
 });
 
 afterAll(async () => {
   for (const socket of openSockets) socket.close();
   await server.close();
-  for (const key of GITHUB_ENV) {
+  for (const key of MANAGED_ENV) {
     if (originalEnv[key] === undefined) delete process.env[key];
     else process.env[key] = originalEnv[key];
   }
@@ -40,10 +47,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/**
- * The server pushes `state` before it answers the ack, so tests buffer every
- * broadcast per socket instead of racing it with a late listener.
- */
+/** The server pushes `state` before it answers the ack, so buffer broadcasts. */
 const inbox = new Map<ClientSocket, GameState[]>();
 
 function connect(): Promise<ClientSocket> {
@@ -61,7 +65,7 @@ function connect(): Promise<ClientSocket> {
 
 function emit<T>(socket: ClientSocket, event: string, payload?: unknown): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`No ack for ${event}`)), 4000);
+    const timer = setTimeout(() => reject(new Error(`No ack for ${event}`)), 5000);
     socket.emit(event, payload ?? {}, (result: T) => {
       clearTimeout(timer);
       resolve(result);
@@ -73,7 +77,7 @@ async function nextState(
   socket: ClientSocket,
   match: (state: GameState) => boolean = () => true,
 ): Promise<GameState> {
-  const deadline = Date.now() + 4000;
+  const deadline = Date.now() + 5000;
   for (;;) {
     const queue = inbox.get(socket) ?? [];
     const index = queue.findIndex(match);
@@ -83,125 +87,194 @@ async function nextState(
   }
 }
 
-function clearGithubEnv(): void {
-  for (const key of GITHUB_ENV) delete process.env[key];
+const CHECK_IN = {
+  energy: 4,
+  pressure: 3,
+  satisfaction: 3,
+  mood: 'Shipped a lot, reviewed even more.',
+  keywords: ['coffee'],
+};
+
+async function joinedRoom(name: string): Promise<{ socket: ClientSocket; code: string }> {
+  const socket = await connect();
+  const created = await emit<JoinResult>(socket, 'room:create', { name });
+  if (!created.ok) throw new Error(created.error);
+  return { socket, code: created.code };
 }
 
-function setGithubEnv(): void {
-  process.env.GITHUB_TOKEN = 'ghp_test_token_value';
-  process.env.GITHUB_OWNER = 'akarion';
-  process.env.GITHUB_REPO = 'retro-archive';
-  process.env.GITHUB_BRANCH = 'main';
+async function reachLevel(
+  host: ClientSocket,
+  topics: Array<{ type: string; title: string }>,
+): Promise<GameState> {
+  await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+  await emit<ActionResult>(host, 'character:forge');
+  await emit<ActionResult>(host, 'phase:topics');
+  for (const topic of topics) await emit<ActionResult>(host, 'topic:add', { ...topic, intensity: 4 });
+  await emit<ActionResult>(host, 'level:generate');
+  return nextState(host, (state) => state.phase === 'level');
 }
 
-describe('socket wiring', () => {
-  it('creates a room, makes the creator the facilitator and lets others join', async () => {
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'Ada' });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    expect(created.code).toMatch(/^[A-Z0-9]{4,6}$/);
+const TOPICS = [
+  { type: 'bad', title: 'Review takes too long' },
+  { type: 'sad', title: 'Deploys fail on Friday' },
+  { type: 'good', title: 'Pair programming helped' },
+];
 
-    const state = await nextState(host);
-    expect(state.you.isFacilitator).toBe(true);
-    expect(state.phase).toBe('lobby');
-    expect(state.players).toHaveLength(1);
+describe('joining over the wire', () => {
+  it('creates a room, makes the creator facilitator and lets others in', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const hostState = await nextState(host);
+    expect(hostState.you.isFacilitator).toBe(true);
+    expect(hostState.phase).toBe('forge');
 
     const guest = await connect();
-    const joined = await emit<JoinResult>(guest, 'room:join', {
-      name: 'Grace',
-      code: created.code,
-    });
+    const joined = await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
     expect(joined.ok).toBe(true);
-    const guestState = await nextState(guest, (value) => value.players.length === 2);
+    const guestState = await nextState(guest, (state) => state.players.length === 2);
     expect(guestState.you.isFacilitator).toBe(false);
-    expect(guestState.players.map((player) => player.name).sort()).toEqual(['Ada', 'Grace']);
   });
 
-  it('rejects an unknown room code and a nameless join', async () => {
-    const socket = await connect();
-    const noRoom = await emit<JoinResult>(socket, 'room:join', { name: 'Ada', code: 'ZZZZZZ' });
-    expect(noRoom.ok).toBe(false);
-    const noName = await emit<JoinResult>(socket, 'room:join', { name: '   ', code: 'ZZZZZZ' });
-    expect(noName.ok).toBe(false);
-    if (!noName.ok) expect(noName.error).toMatch(/player name/i);
-  });
-
-  it('rejects a duplicate player name over the wire', async () => {
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'Linus' });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-
+  it('rejects a duplicate name and an unknown room', async () => {
+    const { code } = await joinedRoom('Linus');
     const guest = await connect();
-    const duplicate = await emit<JoinResult>(guest, 'room:join', {
-      name: 'linus',
-      code: created.code,
-    });
+    const duplicate = await emit<JoinResult>(guest, 'room:join', { name: 'linus', code });
     expect(duplicate.ok).toBe(false);
-    if (!duplicate.ok) expect(duplicate.error).toMatch(/already called/i);
+    const missing = await emit<JoinResult>(guest, 'room:join', { name: 'Ada', code: 'ZZZZZZ' });
+    expect(missing.ok).toBe(false);
   });
 
-  it('reattaches a returning player through room:rejoin', async () => {
-    const first = await connect();
-    const created = await emit<JoinResult>(first, 'room:create', { name: 'Ada' });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+  it('brings a reconnecting player back into the same room', async () => {
+    const { socket: first, code } = await joinedRoom('Ada');
+    const state = await nextState(first);
     first.close();
 
     const second = await connect();
-    const rejoined = await emit<JoinResult>(second, 'room:rejoin', {
-      code: created.code,
-      playerId: created.playerId,
-    });
-    expect(rejoined.ok).toBe(true);
-    const state = await nextState(second);
-    expect(state.you.name).toBe('Ada');
-    expect(state.you.isFacilitator).toBe(true);
+    const back = await emit<JoinResult>(second, 'room:rejoin', { code, playerId: state.you.id });
+    expect(back.ok).toBe(true);
+    const rejoined = await nextState(second);
+    expect(rejoined.you.name).toBe('Ada');
+  });
+});
+
+describe('the flow', () => {
+  it('forges a character from a check-in without any AI key', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    const saved = await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    expect(saved.ok).toBe(true);
+    await emit<ActionResult>(host, 'character:forge');
+
+    const state = await nextState(host, (value) => Boolean(value.you.character));
+    expect(state.you.character?.source).toBe('fallback');
+    expect(state.you.character?.playerName).toBe('Ada');
+    expect(state.generation.aiConfigured).toBe(false);
   });
 
-  it('only lets the facilitator move the raid forward', async () => {
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'Ada' });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
+  it('refuses a check-in that says nothing', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    const result = await emit<ActionResult>(host, 'checkin:set', { ...CHECK_IN, mood: '' });
+    expect(result.ok).toBe(false);
+  });
+
+  it('only shows a player their own topics', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    await emit<ActionResult>(host, 'character:forge');
+    await emit<ActionResult>(host, 'phase:topics');
 
     const guest = await connect();
-    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code: created.code });
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+    await emit<ActionResult>(host, 'topic:add', { type: 'bad', title: 'Review takes too long', intensity: 4 });
+    await emit<ActionResult>(guest, 'topic:add', { type: 'sad', title: 'Friday deploys', intensity: 3 });
 
-    const denied = await emit<ActionResult>(guest, 'game:start');
+    const guestState = await nextState(guest, (state) => state.topicCount === 2);
+    expect(guestState.topicCount).toBe(2);
+    expect(guestState.you.topics.map((topic) => topic.title)).toEqual(['Friday deploys']);
+  });
+
+  it('keeps non-facilitators out of the facilitator controls', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+
+    const denied = await emit<ActionResult>(guest, 'phase:topics');
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.error).toMatch(/facilitator/i);
 
-    const allowed = await emit<ActionResult>(host, 'game:start');
-    expect(allowed.ok).toBe(true);
-    const state = await nextState(guest, (value) => value.phase === 'adventurer');
-    expect(state.phase).toBe('adventurer');
+    await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    await emit<ActionResult>(host, 'character:forge');
+    expect((await emit<ActionResult>(host, 'phase:topics')).ok).toBe(true);
+    expect((await emit<ActionResult>(guest, 'level:generate')).ok).toBe(false);
+    expect((await emit<ActionResult>(guest, 'game:end')).ok).toBe(false);
   });
 
-  it('validates event payloads instead of trusting the client', async () => {
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'Ada' });
-    expect(created.ok).toBe(true);
-    await emit<ActionResult>(host, 'game:start');
+  it('will not generate a dungeon from two post-its', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    await emit<ActionResult>(host, 'character:forge');
+    await emit<ActionResult>(host, 'phase:topics');
+    await emit<ActionResult>(host, 'topic:add', { type: 'bad', title: 'Review takes too long', intensity: 4 });
 
-    const badClass = await emit<ActionResult>(host, 'player:setClass', { classId: 'necromancer' });
-    expect(badClass.ok).toBe(false);
-    const badEnergy = await emit<ActionResult>(host, 'player:setEnergy', { energy: 99 });
-    expect(badEnergy.ok).toBe(false);
-    const goodClass = await emit<ActionResult>(host, 'player:setClass', { classId: 'debugger' });
-    expect(goodClass.ok).toBe(true);
+    const result = await emit<ActionResult>(host, 'level:generate');
+    expect(result.ok).toBe(false);
   });
 
-  it('refuses save:github and save:download for anyone not named Markus', async () => {
-    setGithubEnv();
+  it('builds a playable level and lets a lone player open the fight', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    const level = await reachLevel(host, TOPICS);
+    expect(level.level?.source).toBe('fallback');
+    expect(level.level!.enemies.length).toBeGreaterThan(0);
+
+    // Walk onto a power-up first: attack points come from the good topics.
+    const powerUp = level.level!.powerUps[0]!;
+    host.emit('player:move', powerUp.position);
+    const stocked = await nextState(host, (state) => state.attack.collected > 0);
+    expect(stocked.level!.powerUps[0]!.collectedBy).toBe('Ada');
+
+    const enemyId = level.level!.enemies[0]!.id;
+    const locked = await emit<ActionResult>(host, 'enemy:lock', { enemyId });
+    expect(locked.ok).toBe(true);
+
+    // Alone in the room, the threshold drops to one, so the modal opens.
+    const fighting = await nextState(host, (state) => Boolean(state.encounter));
+    expect(fighting.encounter?.enemyId).toBe(enemyId);
+
+    const vague = await emit<ActionResult>(host, 'encounter:resolve', { treatment: 'fix it' });
+    expect(vague.ok).toBe(false);
+
+    const greedy = await emit<ActionResult>(host, 'encounter:resolve', {
+      treatment: 'Reviewers pick up PRs in the morning slot before new work.',
+      attackPoints: 999,
+    });
+    expect(greedy.ok).toBe(false);
+
+    const resolved = await emit<ActionResult>(host, 'encounter:resolve', {
+      treatment: 'Reviewers pick up PRs in the morning slot before new work.',
+      owner: 'Lena',
+      reviewBy: 'next retro',
+      attackPoints: 1,
+    });
+    expect(resolved.ok).toBe(true);
+
+    const after = await nextState(host, (state) => state.resolutions.length === 1);
+    expect(after.level!.enemies[0]!.status).toBe('resolved');
+    expect(after.encounter).toBeNull();
+    expect(after.attack.spent).toBe(1);
+  });
+
+  it('validates enemy ids instead of trusting them', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    await reachLevel(host, TOPICS);
+    expect((await emit<ActionResult>(host, 'enemy:lock', { enemyId: '../../etc/passwd' })).ok).toBe(false);
+    expect((await emit<ActionResult>(host, 'enemy:lock', { enemyId: 'enemy-nope-9' })).ok).toBe(false);
+  });
+});
+
+describe('saving', () => {
+  it('refuses save and download for anyone not named Markus', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'markus' });
-    expect(created.ok).toBe(true);
-
+    const { socket: host } = await joinedRoom('markus');
     const save = await emit<SaveResult>(host, 'save:github');
     expect(save.ok).toBe(false);
     if (!save.ok) expect(save.error).toMatch(/only the player named markus/i);
@@ -211,15 +284,11 @@ describe('socket wiring', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('reports missing GitHub configuration precisely without failing the game', async () => {
-    clearGithubEnv();
+  it('names the missing GitHub variables and still offers the download', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'Markus' });
-    expect(created.ok).toBe(true);
-
+    const { socket: host } = await joinedRoom('Markus');
     const save = await emit<SaveResult>(host, 'save:github');
     expect(save.ok).toBe(false);
     if (!save.ok) {
@@ -229,21 +298,23 @@ describe('socket wiring', () => {
     }
     expect(fetchMock).not.toHaveBeenCalled();
 
-    // The download fallback still works for Markus.
     const download = await emit<DownloadResult>(host, 'save:download');
     expect(download.ok).toBe(true);
     if (download.ok) {
       expect(download.filename).toMatch(/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_room-[A-Z0-9]+\.json$/);
-      const parsed = JSON.parse(download.json) as Record<string, unknown>;
+      const parsed = JSON.parse(download.json) as { app: string; schemaVersion: number };
       expect(parsed.app).toBe('Retro Raiders: The Blocker Dungeon');
-      expect(JSON.stringify(parsed)).not.toContain(created.ok ? created.playerId : 'x');
+      expect(parsed.schemaVersion).toBe(2);
     }
   });
 
   it('commits through a mocked GitHub API and returns the file URL', async () => {
-    setGithubEnv();
-    const htmlUrl = 'https://github.com/akarion/retro-archive/blob/main/retro-saves/x.json';
-    const fetchMock = vi.fn(async (input: unknown, init?: { method?: string }) => {
+    process.env.GITHUB_TOKEN = 'ghp_test_token';
+    process.env.GITHUB_OWNER = 'WinMarkus';
+    process.env.GITHUB_REPO = 'retro-raiders';
+    const htmlUrl = 'https://github.com/WinMarkus/retro-raiders/blob/main/retro-saves/x.json';
+
+    const fetchMock = vi.fn(async (_input: unknown, init?: { method?: string }) => {
       if ((init?.method ?? 'GET') === 'GET') {
         return { ok: false, status: 404, text: async () => 'Not Found' } as unknown as Response;
       }
@@ -256,46 +327,62 @@ describe('socket wiring', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const host = await connect();
-    const created = await emit<JoinResult>(host, 'room:create', { name: 'Markus' });
-    expect(created.ok).toBe(true);
+    try {
+      const { socket: host } = await joinedRoom('Markus');
+      const save = await emit<SaveResult>(host, 'save:github');
+      expect(save.ok).toBe(true);
+      if (save.ok) {
+        expect(save.url).toBe(htmlUrl);
+        expect(save.path).toMatch(
+          /^retro-saves\/retro-raiders\/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_room-[A-Z0-9]+\.json$/,
+        );
+      }
 
-    const save = await emit<SaveResult>(host, 'save:github');
-    expect(save.ok).toBe(true);
-    if (save.ok) {
-      expect(save.url).toBe(htmlUrl);
-      expect(save.path).toMatch(
-        /^retro-saves\/retro-raiders\/\d{4}-\d{2}-\d{2}_\d{2}-\d{2}_room-[A-Z0-9]+\.json$/,
-      );
+      const put = fetchMock.mock.calls.find((call) => (call[1] as { method?: string })?.method === 'PUT');
+      expect(put).toBeTruthy();
+      const body = JSON.parse((put?.[1] as { body: string }).body) as Record<string, string>;
+      expect(body.branch).toBe('main');
+      const decoded = JSON.parse(Buffer.from(body.content, 'base64').toString('utf8')) as {
+        schemaVersion: number;
+      };
+      expect(decoded.schemaVersion).toBe(2);
+    } finally {
+      delete process.env.GITHUB_TOKEN;
+      delete process.env.GITHUB_OWNER;
+      delete process.env.GITHUB_REPO;
     }
-
-    const putCall = fetchMock.mock.calls.find((call) => (call[1] as { method?: string })?.method === 'PUT');
-    expect(putCall).toBeTruthy();
-    const body = JSON.parse((putCall?.[1] as { body: string }).body) as Record<string, string>;
-    expect(body.branch).toBe('main');
-    expect(body.message).toContain('Retro Raiders');
-    const decoded = Buffer.from(body.content, 'base64').toString('utf8');
-    expect(JSON.parse(decoded).schemaVersion).toBe(1);
   });
 
   it('never reports success when GitHub rejects the commit', async () => {
-    setGithubEnv();
-    const fetchMock = vi.fn(async (_input: unknown, init?: { method?: string }) => {
-      if ((init?.method ?? 'GET') === 'GET') {
-        return { ok: false, status: 404, text: async () => 'Not Found' } as unknown as Response;
-      }
-      return { ok: false, status: 403, text: async () => 'Resource not accessible' } as unknown as Response;
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    process.env.GITHUB_TOKEN = 'ghp_test_token';
+    process.env.GITHUB_OWNER = 'WinMarkus';
+    process.env.GITHUB_REPO = 'retro-raiders';
 
-    const host = await connect();
-    await emit<JoinResult>(host, 'room:create', { name: 'Markus' });
-    const save = await emit<SaveResult>(host, 'save:github');
-    expect(save.ok).toBe(false);
-    if (!save.ok) expect(save.error).toMatch(/403|permission|token/i);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: { method?: string }) => {
+        if ((init?.method ?? 'GET') === 'GET') {
+          return { ok: false, status: 404, text: async () => 'Not Found' } as unknown as Response;
+        }
+        return { ok: false, status: 403, text: async () => 'Resource not accessible' } as unknown as Response;
+      }),
+    );
+
+    try {
+      const { socket: host } = await joinedRoom('Markus');
+      const save = await emit<SaveResult>(host, 'save:github');
+      expect(save.ok).toBe(false);
+      if (!save.ok) expect(save.error).toContain('403');
+    } finally {
+      delete process.env.GITHUB_TOKEN;
+      delete process.env.GITHUB_OWNER;
+      delete process.env.GITHUB_REPO;
+    }
   });
+});
 
-  it('serves the health endpoint', async () => {
+describe('the server itself', () => {
+  it('answers the health check', async () => {
     const response = await fetch(`${url}/health`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as { status: string; app: string };

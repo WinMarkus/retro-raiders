@@ -1,34 +1,93 @@
-/**
- * Types shared by the server and the browser client.
- * Nothing in here ever carries the author of a card.
- */
+/** Types shared by the server and the browser build. */
 
-export type Category = 'loot' | 'trap' | 'monster';
+export type Phase = 'forge' | 'topics' | 'generating' | 'level' | 'victory';
 
-export type Phase =
-  | 'lobby'
-  | 'adventurer'
-  | 'pack'
-  | 'reveal'
-  | 'explore'
-  | 'discuss'
-  | 'boss'
-  | 'forge'
-  | 'victory';
+export type TopicType = 'good' | 'bad' | 'sad';
 
-export type ClassId =
-  | 'debugger'
-  | 'architect'
-  | 'test-mage'
-  | 'deployment-ranger'
-  | 'product-bard'
-  | 'refactor-paladin';
+export type EnemyStatus = 'active' | 'locked' | 'frozen' | 'resolved';
 
-export interface AdventurerClass {
-  id: ClassId;
-  name: string;
+export type EnemyKind = 'minion' | 'trap' | 'curse' | 'miniboss' | 'boss';
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** What a player says about the last two weeks, before any AI is involved. */
+export interface CheckIn {
+  energy: number;
+  pressure: number;
+  satisfaction: number;
+  mood: string;
+  keywords: string[];
+}
+
+export interface Character {
+  playerName: string;
+  characterName: string;
+  className: string;
+  description: string;
+  skill: string;
+  weakness: string;
+  attack: number;
+  support: number;
+  avatarPrompt: string;
+  /** Emoji portrait, chosen deterministically so no image API is needed. */
   emoji: string;
-  tagline: string;
+  /** Hue used for the CSS avatar card, 0-359. */
+  hue: number;
+  source: 'ai' | 'fallback';
+}
+
+export interface Topic {
+  id: string;
+  type: TopicType;
+  title: string;
+  description: string;
+  intensity: number;
+}
+
+export interface Enemy {
+  id: string;
+  name: string;
+  kind: EnemyKind;
+  description: string;
+  sourceTopics: string[];
+  strength: number;
+  position: Point;
+  status: EnemyStatus;
+  lockedBy: string[];
+}
+
+export interface PowerUp {
+  id: string;
+  name: string;
+  description: string;
+  sourceTopics: string[];
+  attackPoints: number;
+  position: Point;
+  collectedBy: string | null;
+}
+
+export interface Level {
+  title: string;
+  intro: string;
+  enemies: Enemy[];
+  powerUps: PowerUp[];
+  source: 'ai' | 'fallback';
+  generatedAt: number;
+  note: string | null;
+}
+
+export interface Resolution {
+  enemyId: string;
+  enemyName: string;
+  treatment: string;
+  owner: string | null;
+  reviewBy: string;
+  attackSpent: number;
+  party: string[];
+  resolvedAt: number;
 }
 
 export interface PublicPlayer {
@@ -36,104 +95,17 @@ export interface PublicPlayer {
   name: string;
   connected: boolean;
   isFacilitator: boolean;
-  classId: ClassId | null;
-  energy: number | null;
   ready: boolean;
+  topicCount: number;
+  character: Character | null;
+  position: Point;
+  lockedEnemyId: string | null;
 }
 
-export interface PublicCard {
-  id: string;
-  category: Category;
-  texts: string[];
-  merged: boolean;
-  notes: string;
-  /** Total tokens spent by the whole party, or null while totals are hidden. */
-  tokens: number | null;
-  /** Tokens the receiving player spent on this card. */
-  myTokens: number;
-  discussed: boolean;
-}
-
-export interface PublicProposal {
-  id: string;
-  authorName: string;
-  title: string;
-  description: string;
-  signal: string;
-  owner: string;
-  reviewBy: string;
-  /** Total forge points, or null while totals are hidden. */
-  points: number | null;
-  myPoints: number;
-  selected: boolean;
-}
-
-export interface DiscussionState {
-  order: string[];
-  index: number;
-  secondsLeft: number;
-  running: boolean;
-  durationSec: number;
-}
-
-export interface BossState {
-  shortlist: string[];
-  myVote: string | null;
-  votedPlayerIds: string[];
-  runoff: boolean;
-  round: number;
-  winnerCardId: string | null;
-  title: string | null;
-  revealed: boolean;
-}
-
-export interface ForgeState {
-  pointsPerPlayer: number;
-  revealed: boolean;
-  myProposalId: string | null;
-  proposedPlayerIds: string[];
-  allocatedPlayerIds: string[];
-  proposals: PublicProposal[];
-  selected: string[];
-}
-
-export interface TokenState {
-  perPlayer: number;
-  revealed: boolean;
-  spentByPlayer: Record<string, number>;
-  myRemaining: number;
-}
-
-export interface SummaryExperiment {
-  title: string;
-  description: string;
-  signal: string;
-  owner: string;
-  reviewBy: string;
-  points: number;
-  selected: boolean;
-}
-
-export interface SummaryCard {
-  id: string;
-  category: Category;
-  texts: string[];
-  merged: boolean;
-  tokens: number;
-  notes: string;
-  discussed: boolean;
-}
-
-export interface Summary {
-  participants: string[];
-  averageEnergy: number | null;
-  energyResponses: number;
-  loot: SummaryCard[];
-  traps: SummaryCard[];
-  monsters: SummaryCard[];
-  discussed: SummaryCard[];
-  boss: { title: string; category: Category; texts: string[]; votes: number } | null;
-  experiments: SummaryExperiment[];
+export interface EncounterState {
+  enemyId: string;
+  openedAt: number;
+  party: string[];
 }
 
 export interface SaveState {
@@ -142,50 +114,70 @@ export interface SaveState {
   message: string | null;
 }
 
+export interface SummaryEntry {
+  title: string;
+  value: string;
+}
+
+export interface Summary {
+  headline: string;
+  stats: SummaryEntry[];
+  resolved: Resolution[];
+  unresolved: Enemy[];
+  actionItems: string[];
+}
+
+/** The per-player view of a room. Never contains authorship of a topic. */
 export interface GameState {
   code: string;
   phase: Phase;
-  you: { id: string; name: string; isFacilitator: boolean };
+  you: {
+    id: string;
+    name: string;
+    isFacilitator: boolean;
+    ready: boolean;
+    checkIn: CheckIn | null;
+    character: Character | null;
+    topics: Topic[];
+    lockedEnemyId: string | null;
+  };
   players: PublicPlayer[];
-  readyPlayerIds: string[];
-  myReady: boolean;
-  myDraft: Record<Category, string[]>;
-  cards: PublicCard[];
-  tokens: TokenState;
-  discussion: DiscussionState | null;
-  boss: BossState;
-  forge: ForgeState;
+  topicCount: number;
+  level: Level | null;
+  attack: {
+    available: number;
+    spent: number;
+    collected: number;
+  };
+  encounter: EncounterState | null;
+  resolutions: Resolution[];
   summary: Summary | null;
-  canSaveToGithub: boolean;
-  githubConfigured: boolean;
   save: SaveState;
-  createdAt: number;
-  completedAt: number | null;
+  generation: {
+    busy: boolean;
+    message: string | null;
+    aiConfigured: boolean;
+  };
+  githubConfigured: boolean;
+  canSave: boolean;
 }
 
-export interface JoinResult {
-  ok: boolean;
-  code?: string;
-  playerId?: string;
-  error?: string;
-}
+export type JoinResult =
+  | { ok: true; code: string; playerId: string }
+  | { ok: false; error: string };
 
-export interface ActionResult {
-  ok: boolean;
-  error?: string;
-  errors?: string[];
-}
+export type ActionResult = { ok: true } | { ok: false; error: string };
 
-export interface SaveResult {
-  ok: boolean;
-  url?: string;
-  path?: string;
-  error?: string;
-}
+export type SaveResult =
+  | { ok: true; url: string; path: string }
+  | { ok: false; error: string };
 
-export interface DownloadResult {
-  ok: boolean;
-  filename?: string;
-  json?: string;
-  error?: string;
+export type DownloadResult =
+  | { ok: true; filename: string; json: string }
+  | { ok: false; error: string };
+
+/** Lightweight movement broadcast, sent instead of a full state push. */
+export interface MoveBroadcast {
+  playerId: string;
+  position: Point;
 }

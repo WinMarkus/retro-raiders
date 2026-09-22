@@ -1,165 +1,111 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import {
-  CATEGORIES,
-  EMPTY_ROOM_TTL_MS,
-  LIMITS,
-  STALE_ROOM_TTL_MS,
-} from '../shared/constants.js';
-import type { Category, ClassId, Phase } from '../shared/types.js';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { EMPTY_ROOM_TTL_MS, LIMITS, MAP, STALE_ROOM_TTL_MS } from '../shared/constants.js';
+import type {
+  CheckIn,
+  Character,
+  EncounterState,
+  Level,
+  Phase,
+  Point,
+  Resolution,
+  SaveState,
+  Topic,
+} from '../shared/types.js';
 
 export interface PlayerRecord {
   id: string;
   name: string;
   socketId: string | null;
   connected: boolean;
-  classId: ClassId | null;
-  energy: number | null;
+  ready: boolean;
+  checkIn: CheckIn | null;
+  character: Character | null;
+  position: Point;
+  lockedEnemyId: string | null;
   joinedAt: number;
   lastSeen: number;
 }
 
-export interface CardRecord {
-  id: string;
-  category: Category;
-  /** Merging keeps every original sentence. */
-  texts: string[];
-  /** Author ids. Server-only. Never leaves this process. */
-  authorIds: string[];
-  /** Stable source ids so a reopened pack phase can rebuild without losing data. */
-  sourceIds: string[];
-  notes: string;
-  discussed: boolean;
-}
-
-export interface ProposalRecord {
-  id: string;
-  authorId: string;
-  title: string;
-  description: string;
-  signal: string;
-  owner: string;
-  reviewBy: string;
-}
-
-export interface DiscussionRecord {
-  order: string[];
-  index: number;
-  secondsLeft: number;
-  running: boolean;
-  durationSec: number;
-}
-
-export interface BossRecord {
-  shortlist: string[];
-  votes: Map<string, string>;
-  runoff: boolean;
-  round: number;
-  winnerCardId: string | null;
-  title: string | null;
-  revealed: boolean;
-}
-
-export interface ForgeRecord {
-  proposals: ProposalRecord[];
-  allocations: Map<string, Map<string, number>>;
-  revealed: boolean;
-  selected: string[];
-}
-
 export interface Room {
   code: string;
-  /** Salt that keeps card ids from being traceable back to a player id. */
-  secret: string;
   createdAt: number;
   lastActivity: number;
-  completedAt: number | null;
   phase: Phase;
   facilitatorId: string | null;
   players: Map<string, PlayerRecord>;
-  drafts: Map<string, Record<Category, string[]>>;
-  ready: Set<string>;
-  cards: CardRecord[];
-  tokens: Map<string, Map<string, number>>;
-  tokensRevealed: boolean;
-  discussion: DiscussionRecord | null;
-  boss: BossRecord;
-  forge: ForgeRecord;
-  save: { status: 'idle' | 'saving' | 'saved' | 'error'; url: string | null; message: string | null };
+  /** topicId -> topic. Authorship lives in `topicAuthors`, never in the view. */
+  topics: Map<string, Topic>;
+  topicAuthors: Map<string, string>;
+  level: Level | null;
+  encounter: EncounterState | null;
+  resolutions: Resolution[];
+  attackCollected: number;
+  attackSpent: number;
+  generation: { busy: boolean; message: string | null };
+  save: SaveState;
 }
 
+export type JoinError = 'name-taken' | 'room-full';
+
+/** No O/0/I/1 — people read these out loud over a video call. */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-export function generateRoomCode(exists: (code: string) => boolean): string {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const bytes = randomBytes(LIMITS.roomCode);
-    let code = '';
-    for (let i = 0; i < LIMITS.roomCode; i += 1) {
-      code += CODE_ALPHABET[bytes[i]! % CODE_ALPHABET.length];
-    }
-    if (!exists(code)) return code;
+export function generateRoomCode(): string {
+  const bytes = randomBytes(LIMITS.roomCode);
+  let code = '';
+  for (let i = 0; i < LIMITS.roomCode; i += 1) {
+    code += CODE_ALPHABET[bytes[i]! % CODE_ALPHABET.length];
   }
-  throw new Error('Could not generate a free room code');
+  return code;
 }
 
-export function emptyDraft(): Record<Category, string[]> {
-  const draft = {} as Record<Category, string[]>;
-  for (const category of CATEGORIES) {
-    draft[category] = new Array(LIMITS.cardsPerCategory).fill('');
-  }
-  return draft;
+/** Players enter near the bottom of the map, spread out so they do not stack. */
+export function spawnPoint(index: number): Point {
+  const perRow = 6;
+  const column = index % perRow;
+  const row = Math.floor(index / perRow);
+  return {
+    x: MAP.margin + 60 + column * 90,
+    y: MAP.height - MAP.margin - row * 60,
+  };
 }
 
-export function cardIdFor(room: Room, playerId: string, category: Category, index: number): string {
-  return createHash('sha256')
-    .update(`${room.secret}:${playerId}:${category}:${index}`)
-    .digest('hex')
-    .slice(0, 12);
-}
-
-function newRoom(code: string): Room {
+function emptyRoom(code: string): Room {
   const now = Date.now();
   return {
     code,
-    secret: randomBytes(24).toString('hex'),
     createdAt: now,
     lastActivity: now,
-    completedAt: null,
-    phase: 'lobby',
+    phase: 'forge',
     facilitatorId: null,
     players: new Map(),
-    drafts: new Map(),
-    ready: new Set(),
-    cards: [],
-    tokens: new Map(),
-    tokensRevealed: false,
-    discussion: null,
-    boss: {
-      shortlist: [],
-      votes: new Map(),
-      runoff: false,
-      round: 1,
-      winnerCardId: null,
-      title: null,
-      revealed: false,
-    },
-    forge: { proposals: [], allocations: new Map(), revealed: false, selected: [] },
+    topics: new Map(),
+    topicAuthors: new Map(),
+    level: null,
+    encounter: null,
+    resolutions: [],
+    attackCollected: 0,
+    attackSpent: 0,
+    generation: { busy: false, message: null },
     save: { status: 'idle', url: null, message: null },
   };
 }
 
-export type JoinError =
-  | 'room-not-found'
-  | 'name-taken'
-  | 'room-full'
-  | 'invalid-name'
-  | 'player-not-found';
-
 export class RoomStore {
   private rooms = new Map<string, Room>();
 
+  get size(): number {
+    return this.rooms.size;
+  }
+
+  list(): Room[] {
+    return [...this.rooms.values()];
+  }
+
   create(): Room {
-    const code = generateRoomCode((candidate) => this.rooms.has(candidate));
-    const room = newRoom(code);
+    let code = generateRoomCode();
+    while (this.rooms.has(code)) code = generateRoomCode();
+    const room = emptyRoom(code);
     this.rooms.set(code, room);
     return room;
   }
@@ -168,24 +114,15 @@ export class RoomStore {
     return this.rooms.get(code);
   }
 
-  has(code: string): boolean {
-    return this.rooms.has(code);
-  }
-
-  list(): Room[] {
-    return [...this.rooms.values()];
-  }
-
-  get size(): number {
-    return this.rooms.size;
-  }
-
   delete(code: string): void {
     this.rooms.delete(code);
   }
 
-  /** Adds a player. Duplicate names inside a room are rejected, case-insensitively. */
-  addPlayer(room: Room, name: string, socketId: string): { ok: true; player: PlayerRecord } | { ok: false; error: JoinError } {
+  addPlayer(
+    room: Room,
+    name: string,
+    socketId: string,
+  ): { ok: true; player: PlayerRecord } | { ok: false; error: JoinError } {
     if (room.players.size >= LIMITS.maxPlayers) return { ok: false, error: 'room-full' };
     const taken = [...room.players.values()].some(
       (player) => player.name.toLowerCase() === name.toLowerCase(),
@@ -198,15 +135,15 @@ export class RoomStore {
       name,
       socketId,
       connected: true,
-      classId: null,
-      energy: null,
+      ready: false,
+      checkIn: null,
+      character: null,
+      position: spawnPoint(room.players.size),
+      lockedEnemyId: null,
       joinedAt: now,
       lastSeen: now,
     };
     room.players.set(player.id, player);
-    room.drafts.set(player.id, emptyDraft());
-    room.tokens.set(player.id, new Map());
-    room.forge.allocations.set(player.id, new Map());
     if (!room.facilitatorId) room.facilitatorId = player.id;
     room.lastActivity = now;
     return { ok: true, player };
@@ -219,31 +156,38 @@ export class RoomStore {
     player.connected = true;
     player.lastSeen = Date.now();
     room.lastActivity = Date.now();
-    if (!room.facilitatorId || !room.players.has(room.facilitatorId)) {
-      room.facilitatorId = player.id;
-    }
+    if (!room.facilitatorId) room.facilitatorId = player.id;
     return player;
   }
 
-  markDisconnected(room: Room, playerId: string): void {
-    const player = room.players.get(playerId);
-    if (!player) return;
-    player.connected = false;
-    player.socketId = null;
-    player.lastSeen = Date.now();
-    room.lastActivity = Date.now();
+  markDisconnected(socketId: string): Room | null {
+    for (const room of this.rooms.values()) {
+      for (const player of room.players.values()) {
+        if (player.socketId !== socketId) continue;
+        player.connected = false;
+        player.socketId = null;
+        player.lastSeen = Date.now();
+        room.lastActivity = Date.now();
+        return room;
+      }
+    }
+    return null;
   }
 
-  /** Rooms nobody came back to eventually stop costing memory. */
-  sweep(now = Date.now()): string[] {
-    const removed: string[] = [];
-    for (const room of this.rooms.values()) {
-      const connected = [...room.players.values()].some((player) => player.connected);
+  /** Drops rooms nobody is coming back to, so memory does not creep. */
+  sweep(now = Date.now()): number {
+    let removed = 0;
+    for (const [code, room] of this.rooms) {
+      const anyConnected = [...room.players.values()].some((player) => player.connected);
       const idleFor = now - room.lastActivity;
-      const isEmpty = room.players.size === 0 || !connected;
-      if ((isEmpty && idleFor > EMPTY_ROOM_TTL_MS) || idleFor > STALE_ROOM_TTL_MS) {
-        this.delete(room.code);
-        removed.push(room.code);
+      const expired = anyConnected
+        ? false
+        : room.players.size === 0
+          ? idleFor > EMPTY_ROOM_TTL_MS
+          : idleFor > STALE_ROOM_TTL_MS;
+      if (expired) {
+        this.rooms.delete(code);
+        removed += 1;
       }
     }
     return removed;
@@ -258,6 +202,6 @@ export function connectedPlayers(room: Room): PlayerRecord[] {
   return [...room.players.values()].filter((player) => player.connected);
 }
 
-export function playerByName(room: Room, name: string): PlayerRecord | undefined {
-  return [...room.players.values()].find((player) => player.name === name);
+export function topicsOf(room: Room, playerId: string): Topic[] {
+  return [...room.topics.values()].filter((topic) => room.topicAuthors.get(topic.id) === playerId);
 }

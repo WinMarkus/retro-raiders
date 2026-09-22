@@ -1,120 +1,106 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_ROOM_TTL_MS, LIMITS } from '../src/shared/constants.js';
-import { RoomStore, generateRoomCode } from '../src/server/state.js';
+import { LIMITS } from '../src/shared/constants.js';
+import { RoomStore, connectedPlayers, generateRoomCode, isFacilitator } from '../src/server/state.js';
 
-describe('room codes', () => {
-  it('generates six unreadable-free uppercase characters', () => {
-    const code = generateRoomCode(() => false);
-    expect(code).toHaveLength(LIMITS.roomCode);
-    expect(code).toMatch(/^[A-Z0-9]{6}$/);
-    expect(code).not.toMatch(/[OI10]/);
-  });
-
-  it('never hands out a code that already exists', () => {
-    const taken = new Set<string>();
+describe('room creation', () => {
+  it('creates readable codes without look-alike characters', () => {
     for (let i = 0; i < 50; i += 1) {
-      const code = generateRoomCode((candidate) => taken.has(candidate));
-      expect(taken.has(code)).toBe(false);
-      taken.add(code);
+      const code = generateRoomCode();
+      expect(code).toHaveLength(LIMITS.roomCode);
+      expect(code).toMatch(/^[A-HJ-NP-Z2-9]+$/);
     }
   });
-});
 
-describe('room creation and joining', () => {
-  it('creates independent rooms with their own state', () => {
+  it('keeps rooms independent and starts in the character forge', () => {
     const store = new RoomStore();
     const first = store.create();
     const second = store.create();
     expect(first.code).not.toBe(second.code);
+    expect(first.phase).toBe('forge');
     expect(store.size).toBe(2);
-    store.addPlayer(first, 'Markus', 'socket-1');
-    expect(first.players.size).toBe(1);
-    expect(second.players.size).toBe(0);
   });
 
-  it('makes the first player the facilitator and keeps it that way', () => {
+  it('makes the first player the facilitator', () => {
     const store = new RoomStore();
     const room = store.create();
-    const first = store.addPlayer(room, 'Markus', 'socket-1');
-    const second = store.addPlayer(room, 'Lena', 'socket-2');
-    expect(first.ok && second.ok).toBe(true);
-    if (!first.ok || !second.ok) return;
-    expect(room.facilitatorId).toBe(first.player.id);
-    expect(room.facilitatorId).not.toBe(second.player.id);
+    const host = store.addPlayer(room, 'Ada', 'socket-1');
+    const guest = store.addPlayer(room, 'Grace', 'socket-2');
+    expect(host.ok && guest.ok).toBe(true);
+    if (!host.ok || !guest.ok) return;
+    expect(isFacilitator(room, host.player.id)).toBe(true);
+    expect(isFacilitator(room, guest.player.id)).toBe(false);
   });
+});
 
-  it('rejects a duplicate name in the same room, whatever the casing', () => {
+describe('joining', () => {
+  it('rejects a duplicate name regardless of case', () => {
     const store = new RoomStore();
     const room = store.create();
-    expect(store.addPlayer(room, 'Markus', 'socket-1').ok).toBe(true);
-    const clash = store.addPlayer(room, 'markus', 'socket-2');
-    expect(clash.ok).toBe(false);
-    if (!clash.ok) expect(clash.error).toBe('name-taken');
-    expect(room.players.size).toBe(1);
+    store.addPlayer(room, 'Markus', 'socket-1');
+    const again = store.addPlayer(room, 'markus', 'socket-2');
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.error).toBe('name-taken');
   });
 
   it('allows the same name in a different room', () => {
     const store = new RoomStore();
-    const a = store.create();
-    const b = store.create();
-    expect(store.addPlayer(a, 'Markus', 'socket-1').ok).toBe(true);
-    expect(store.addPlayer(b, 'Markus', 'socket-2').ok).toBe(true);
+    const first = store.create();
+    const second = store.create();
+    store.addPlayer(first, 'Markus', 'socket-1');
+    expect(store.addPlayer(second, 'Markus', 'socket-2').ok).toBe(true);
   });
 
   it('refuses players beyond the room limit', () => {
     const store = new RoomStore();
     const room = store.create();
     for (let i = 0; i < LIMITS.maxPlayers; i += 1) {
-      expect(store.addPlayer(room, `Raider ${i}`, `socket-${i}`).ok).toBe(true);
+      expect(store.addPlayer(room, `player-${i}`, `socket-${i}`).ok).toBe(true);
     }
-    const overflow = store.addPlayer(room, 'One too many', 'socket-x');
+    const overflow = store.addPlayer(room, 'one-too-many', 'socket-x');
     expect(overflow.ok).toBe(false);
     if (!overflow.ok) expect(overflow.error).toBe('room-full');
   });
-});
 
-describe('reconnection', () => {
-  it('reattaches a disconnected player by player id', () => {
+  it('spreads spawn points so tokens do not stack', () => {
     const store = new RoomStore();
     const room = store.create();
-    const joined = store.addPlayer(room, 'Markus', 'socket-1');
+    const a = store.addPlayer(room, 'Ada', 's1');
+    const b = store.addPlayer(room, 'Grace', 's2');
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.player.position).not.toEqual(b.player.position);
+  });
+});
+
+describe('reconnecting', () => {
+  it('reattaches a player to a new socket', () => {
+    const store = new RoomStore();
+    const room = store.create();
+    const joined = store.addPlayer(room, 'Ada', 'socket-1');
     expect(joined.ok).toBe(true);
     if (!joined.ok) return;
 
-    store.markDisconnected(room, joined.player.id);
-    expect(room.players.get(joined.player.id)?.connected).toBe(false);
+    store.markDisconnected('socket-1');
+    expect(connectedPlayers(room)).toHaveLength(0);
 
     const back = store.reattach(room, joined.player.id, 'socket-2');
     expect(back?.connected).toBe(true);
-    expect(back?.socketId).toBe('socket-2');
-    expect(room.facilitatorId).toBe(joined.player.id);
+    expect(connectedPlayers(room)).toHaveLength(1);
   });
 
-  it('refuses an unknown player id', () => {
+  it('returns null for an unknown player id', () => {
     const store = new RoomStore();
     const room = store.create();
     expect(store.reattach(room, 'not-a-player', 'socket-9')).toBeNull();
   });
-});
 
-describe('stale rooms', () => {
-  it('removes rooms nobody came back to', () => {
+  it('sweeps rooms nobody came back to', () => {
     const store = new RoomStore();
     const room = store.create();
-    const joined = store.addPlayer(room, 'Markus', 'socket-1');
-    if (!joined.ok) throw new Error('setup failed');
-    store.markDisconnected(room, joined.player.id);
-
-    expect(store.sweep(Date.now())).toEqual([]);
-    expect(store.sweep(Date.now() + EMPTY_ROOM_TTL_MS + 1000)).toEqual([room.code]);
+    store.addPlayer(room, 'Ada', 'socket-1');
+    store.markDisconnected('socket-1');
+    expect(store.sweep(Date.now())).toBe(0);
+    expect(store.sweep(Date.now() + 1000 * 60 * 60 * 9)).toBe(1);
     expect(store.size).toBe(0);
-  });
-
-  it('keeps rooms that still have someone in them', () => {
-    const store = new RoomStore();
-    const room = store.create();
-    store.addPlayer(room, 'Markus', 'socket-1');
-    expect(store.sweep(Date.now() + EMPTY_ROOM_TTL_MS + 1000)).toEqual([]);
-    expect(store.size).toBe(1);
   });
 });

@@ -1,88 +1,129 @@
-import { ADVENTURER_CLASSES, CATEGORY_META } from '../../shared/constants.js';
-import type { Category, PublicPlayer } from '../../shared/types.js';
-import { h, type Props } from '../dom.js';
+import { h } from '../dom.js';
+import type { Character, PublicPlayer } from '../../shared/types.js';
 
-export function panel(title: string, subtitle: string | null, ...children: (Node | null | false)[]): HTMLElement {
+export function panel(title: string | null, ...children: Array<Node | string | false | null>): HTMLElement {
   return h(
     'section',
     { class: 'panel' },
-    h(
-      'div',
-      { class: 'panel__head' },
-      h('h2', { class: 'panel__title', text: title }),
-      subtitle ? h('p', { class: 'panel__subtitle', text: subtitle }) : null,
-    ),
-    h('div', { class: 'panel__body' }, ...children.filter(Boolean).map((child) => child as Node)),
+    title ? h('h2', { class: 'panel__title', text: title }) : null,
+    ...children,
   );
 }
 
-export function button(label: string, props: Props = {}): HTMLButtonElement {
-  const { class: className, ...rest } = props;
-  return h('button', { type: 'button', class: `btn ${className ?? ''}`.trim(), ...rest }, label);
+export function button(
+  label: string,
+  onClick: () => void,
+  variant: 'primary' | 'ghost' | 'danger' = 'primary',
+  disabled = false,
+): HTMLButtonElement {
+  return h('button', {
+    class: `btn btn--${variant}`,
+    type: 'button',
+    text: label,
+    disabled,
+    onClick,
+  });
 }
 
-export function emptyState(message: string, hint?: string): HTMLElement {
+export function emptyState(text: string): HTMLElement {
+  return h('p', { class: 'empty', text });
+}
+
+export function field(label: string, control: HTMLElement, hint?: string): HTMLElement {
+  return h(
+    'label',
+    { class: 'field' },
+    h('span', { class: 'field__label', text: label }),
+    control,
+    hint ? h('span', { class: 'field__hint', text: hint }) : null,
+  );
+}
+
+export function scaleInput(
+  label: string,
+  value: number,
+  onInput: (value: number) => void,
+  hint?: string,
+): HTMLElement {
+  const output = h('output', { class: 'scale__value', text: String(value) });
+  const input = h('input', {
+    class: 'scale__input',
+    type: 'range',
+    min: '1',
+    max: '5',
+    step: '1',
+    value: String(value),
+    onInput: (event: Event) => {
+      const next = Number.parseInt((event.target as HTMLInputElement).value, 10);
+      output.textContent = String(next);
+      onInput(next);
+    },
+  });
   return h(
     'div',
-    { class: 'empty' },
-    h('p', { class: 'empty__message', text: message }),
-    hint ? h('p', { class: 'empty__hint', text: hint }) : null,
+    { class: 'scale' },
+    h('span', { class: 'field__label', text: label }),
+    h('div', { class: 'scale__row' }, input, output),
+    hint ? h('span', { class: 'field__hint', text: hint }) : null,
   );
 }
 
-export function classInfo(classId: string | null): { emoji: string; name: string } {
-  const found = ADVENTURER_CLASSES.find((item) => item.id === classId);
-  return found ? { emoji: found.emoji, name: found.name } : { emoji: '🎲', name: 'Unassigned' };
+export function avatarBadge(character: Character | null, name: string, size: 'sm' | 'lg' = 'sm'): HTMLElement {
+  const hue = character?.hue ?? 210;
+  return h(
+    'span',
+    {
+      class: `avatar avatar--${size}`,
+      style: `--avatar-hue:${hue}`,
+      title: character ? `${character.characterName} — ${character.className}` : name,
+    },
+    h('span', { class: 'avatar__emoji', text: character?.emoji ?? '🎲' }),
+  );
 }
 
-export function playerChip(player: PublicPlayer, options: { showReady?: boolean } = {}): HTMLElement {
-  const info = classInfo(player.classId);
+export function characterCard(character: Character): HTMLElement {
   return h(
-    'li',
-    {
-      class: `raider ${player.connected ? '' : 'raider--away'} ${
-        options.showReady && player.ready ? 'raider--ready' : ''
-      }`.trim(),
-    },
-    h('span', { class: 'raider__avatar', 'aria-hidden': 'true', text: info.emoji }),
+    'article',
+    { class: 'hero-card', style: `--avatar-hue:${character.hue}` },
     h(
-      'span',
-      { class: 'raider__meta' },
-      h('span', { class: 'raider__name', text: player.name }),
+      'header',
+      { class: 'hero-card__head' },
+      avatarBadge(character, character.playerName, 'lg'),
       h(
-        'span',
-        { class: 'raider__tags' },
-        player.isFacilitator ? h('span', { class: 'tag tag--gold', text: 'Facilitator' }) : null,
-        player.classId ? h('span', { class: 'tag', text: info.name }) : null,
-        !player.connected ? h('span', { class: 'tag tag--away', text: 'Reconnecting' }) : null,
-        options.showReady && player.ready ? h('span', { class: 'tag tag--ready', text: 'Ready' }) : null,
+        'div',
+        {},
+        h('h3', { class: 'hero-card__name', text: character.characterName }),
+        h('p', { class: 'hero-card__class', text: character.className }),
+        h('p', { class: 'hero-card__player', text: `played by ${character.playerName}` }),
       ),
+    ),
+    h('p', { class: 'hero-card__text', text: character.description }),
+    h(
+      'dl',
+      { class: 'hero-card__stats' },
+      h('dt', { text: 'Skill' }),
+      h('dd', { text: character.skill }),
+      h('dt', { text: 'Weakness' }),
+      h('dd', { text: character.weakness }),
+      h('dt', { text: 'Attack' }),
+      h('dd', { text: '⚔️'.repeat(character.attack) }),
+      h('dt', { text: 'Support' }),
+      h('dd', { text: '✚'.repeat(character.support) }),
     ),
   );
 }
 
-export function party(players: PublicPlayer[], options: { showReady?: boolean } = {}): HTMLElement {
-  return h('ul', { class: 'party' }, ...players.map((player) => playerChip(player, options)));
-}
-
-export function categoryBadge(category: Category): HTMLElement {
-  const meta = CATEGORY_META[category];
+export function playerChip(player: PublicPlayer): HTMLElement {
   return h(
-    'span',
-    { class: `badge badge--${category}` },
-    h('span', { 'aria-hidden': 'true', text: meta.emoji }),
-    h('span', { text: meta.room }),
+    'li',
+    { class: `chip${player.connected ? '' : ' chip--away'}${player.ready ? ' chip--ready' : ''}` },
+    avatarBadge(player.character, player.name),
+    h('span', { class: 'chip__name', text: player.name }),
+    player.isFacilitator ? h('span', { class: 'chip__tag', text: 'facilitator' }) : null,
+    player.connected ? null : h('span', { class: 'chip__tag', text: 'away' }),
   );
 }
 
-export function tokenPips(count: number, max = 3): HTMLElement {
-  const wrapper = h('span', { class: 'pips', 'aria-hidden': 'true' });
-  for (let i = 0; i < max; i += 1) {
-    wrapper.appendChild(h('span', { class: `pip ${i < count ? 'pip--lit' : ''}`.trim() }));
-  }
-  return wrapper;
-}
-
-export function progressNote(done: number, total: number, noun: string): HTMLElement {
-  return h('p', { class: 'progress-note', text: `${done} of ${total} ${noun}` });
+export function party(players: PublicPlayer[]): HTMLElement {
+  return h('ul', { class: 'party' }, ...players.map(playerChip));
 }

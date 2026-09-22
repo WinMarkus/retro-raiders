@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import express, { type Express } from 'express';
 import { Server as IOServer } from 'socket.io';
 import { APP_NAME } from '../shared/constants.js';
-import { registerSocketHandlers, startDiscussionClock } from './sockets.js';
+import { registerSocketHandlers } from './sockets.js';
 import { RoomStore } from './state.js';
 import { sweepRateLimits } from './ratelimit.js';
 
@@ -57,7 +57,6 @@ export function createGameServer(): CreatedServer {
 
   registerSocketHandlers(io, store);
 
-  const clock = startDiscussionClock(io, store);
   const sweeper = setInterval(() => {
     store.sweep();
     sweepRateLimits();
@@ -65,7 +64,6 @@ export function createGameServer(): CreatedServer {
   sweeper.unref?.();
 
   const close = async (): Promise<void> => {
-    clearInterval(clock);
     clearInterval(sweeper);
     await io.close();
     await new Promise<void>((resolve) => {

@@ -1,202 +1,102 @@
-import { PHASES, PHASE_META } from '../shared/constants.js';
+import { PHASE_LABEL } from '../shared/constants.js';
 import type { GameState } from '../shared/types.js';
-import { h, mount, withFocusPreserved } from './dom.js';
-import { act, attachSocketLifecycle, clearSession, onRender, render, state } from './store.js';
-import { renderAdventurer } from './views/adventurer.js';
-import { renderBoss } from './views/boss.js';
-import { renderDiscuss } from './views/discuss.js';
-import { renderExplore, renderReveal } from './views/dungeon.js';
+import { h, mount } from './dom.js';
+import { attachSocketLifecycle, leave, notify, onChange, store } from './store.js';
 import { renderForge } from './views/forge.js';
 import { renderJoin } from './views/join.js';
-import { renderLobby } from './views/lobby.js';
-import { renderPack } from './views/pack.js';
-import { button } from './views/ui.js';
+import { renderLevel, stopLevelLoop } from './views/level.js';
+import { renderTopics } from './views/topics.js';
 import { renderVictory } from './views/victory.js';
+import { panel } from './views/ui.js';
 
-const CONNECTION_LABEL: Record<string, string> = {
-  connecting: 'Connecting…',
-  online: 'Connected',
-  offline: 'Offline — retrying',
-};
+const getState = (): GameState | null => store.state;
 
-function topbar(game: GameState | null): HTMLElement {
-  const connection = h(
-    'span',
-    { class: `conn conn--${state.connection}` },
-    h('span', { class: 'conn__dot', 'aria-hidden': 'true' }),
-    h('span', { text: CONNECTION_LABEL[state.connection] ?? '' }),
-  );
-
-  if (!game) {
-    return h(
-      'div',
-      { class: 'topbar__inner' },
-      h('span', { class: 'brand' }, h('span', { 'aria-hidden': 'true', text: '🗡️' }), 'Retro Raiders'),
-      connection,
-    );
-  }
-
-  const awayCount = game.players.filter((player) => !player.connected).length;
-
+function topbar(state: GameState | null): HTMLElement {
   return h(
     'div',
     { class: 'topbar__inner' },
-    h('span', { class: 'brand' }, h('span', { 'aria-hidden': 'true', text: '🗡️' }), 'Retro Raiders'),
-    h(
-      'span',
-      { class: 'topbar__room' },
-      h('span', { class: 'topbar__room-label', text: 'Room' }),
-      h('strong', { class: 'topbar__code', text: game.code }),
-    ),
-    h('span', { class: 'topbar__phase', text: `${PHASE_META[game.phase].step} · ${PHASE_META[game.phase].title}` }),
+    h('span', { class: 'brand', text: '⚔️ Retro Raiders' }),
+    state
+      ? h(
+          'div',
+          { class: 'topbar__meta' },
+          h('span', { class: 'room-code', title: 'Room code', text: state.code }),
+          h('span', { class: 'phase-label', text: PHASE_LABEL[state.phase] }),
+          h('span', { class: 'party-count', text: `${state.players.filter((p) => p.connected).length} online` }),
+        )
+      : null,
     h('span', {
-      class: 'topbar__party',
-      text: `${game.players.length} raider${game.players.length === 1 ? '' : 's'}${awayCount ? ` · ${awayCount} reconnecting` : ''}`,
+      class: `conn conn--${store.connected ? 'on' : 'off'}`,
+      title: store.connected ? 'Connected' : 'Reconnecting…',
+      text: store.connected ? '●' : '○',
     }),
-    connection,
   );
 }
 
-function phaseRail(game: GameState): HTMLElement {
-  const currentIndex = PHASES.indexOf(game.phase);
-  return h(
-    'nav',
-    { class: 'rail', 'aria-label': 'Raid progress' },
-    ...PHASES.map((phase, index) =>
-      h(
-        'span',
-        {
-          class: `rail__step ${index === currentIndex ? 'rail__step--current' : ''} ${
-            index < currentIndex ? 'rail__step--done' : ''
-          }`.trim(),
-          'aria-current': index === currentIndex ? 'step' : undefined,
-          title: PHASE_META[phase].title,
-        },
-        h('span', { class: 'rail__dot', 'aria-hidden': 'true' }),
-        h('span', { class: 'rail__label', text: PHASE_META[phase].title }),
-      ),
-    ),
-  );
-}
-
-function facilitatorBar(game: GameState): HTMLElement | null {
-  if (!game.you.isFacilitator) return null;
-  const isLast = game.phase === PHASES[PHASES.length - 1];
-  return h(
-    'div',
-    { class: 'facilitator__inner' },
-    h('span', { class: 'facilitator__label' }, h('span', { 'aria-hidden': 'true', text: '🔥' }), 'Facilitator controls'),
-    h(
-      'div',
-      { class: 'facilitator__actions' },
-      button('Back one phase', {
-        class: 'btn--ghost btn--small',
-        disabled: game.phase === 'lobby',
-        onClick: () => void act('phase:back'),
-      }),
-      button(isLast ? 'The raid is over' : 'Next phase', {
-        class: 'btn--primary btn--small',
-        disabled: isLast,
-        onClick: () => void act('phase:next'),
-      }),
-      button('Reset the game', {
-        class: 'btn--danger btn--small',
-        onClick: () => {
-          const ok = window.confirm(
-            'Reset the whole raid? Every card, token, vote and experiment in this room is wiped and the party goes back to the lobby.',
-          );
-          if (ok) void act('game:reset');
-        },
-      }),
-    ),
-  );
-}
-
-function stageFor(game: GameState): HTMLElement {
-  switch (game.phase) {
-    case 'lobby':
-      return renderLobby(game);
-    case 'adventurer':
-      return renderAdventurer(game);
-    case 'pack':
-      return renderPack(game);
-    case 'reveal':
-      return renderReveal(game);
-    case 'explore':
-      return renderExplore(game);
-    case 'discuss':
-      return renderDiscuss(game);
-    case 'boss':
-      return renderBoss(game);
+function stageFor(state: GameState): HTMLElement {
+  switch (state.phase) {
     case 'forge':
-      return renderForge(game);
+      return renderForge(state);
+    case 'topics':
+      return renderTopics(state);
+    case 'generating':
+      return panel(
+        'Summoning the dungeon',
+        h('div', { class: 'summoning' }, h('span', { class: 'spinner spinner--lg' })),
+        h('p', {
+          class: 'field__hint',
+          text: state.generation.message ?? 'Reading the post-its, sharpening their teeth…',
+        }),
+      );
+    case 'level':
+      return renderLevel(state, getState);
     case 'victory':
-      return renderVictory(game);
+      return renderVictory(state);
     default:
-      return h('p', { text: 'Unknown phase.' });
+      return panel('Retro Raiders', h('p', { class: 'empty', text: 'Unknown phase.' }));
   }
 }
 
-function renderApp(): void {
+function render(): void {
   const topbarHost = document.getElementById('topbar');
-  const stage = document.getElementById('stage');
-  const facilitator = document.getElementById('facilitator');
-  if (!topbarHost || !stage || !facilitator) return;
+  const stageHost = document.getElementById('stage');
+  if (!topbarHost || !stageHost) return;
 
-  withFocusPreserved(() => {
-    const game = state.screen === 'game' ? state.game : null;
-    mount(topbarHost, topbar(game));
+  const state = store.state;
+  mount(topbarHost, topbar(state));
 
-    if (!game) {
-      mount(stage, renderJoin());
-      mount(facilitator);
-      facilitator.hidden = true;
-      document.body.classList.add('body--join');
-      return;
-    }
+  if (!state) {
+    stopLevelLoop();
+    mount(stageHost, renderJoin());
+    document.body.dataset.phase = 'join';
+    return;
+  }
 
-    document.body.classList.remove('body--join');
-    mount(
-      stage,
-      phaseRail(game),
-      h(
-        'header',
-        { class: 'phase-head' },
-        h('h1', { class: 'phase-head__title', text: PHASE_META[game.phase].title }),
-        h('p', { class: 'phase-head__blurb', text: PHASE_META[game.phase].blurb }),
-      ),
-      state.connection === 'offline'
-        ? h('p', { class: 'notice notice--warn', role: 'status', text: 'Connection lost. Your seat is kept — this page rejoins automatically.' })
-        : null,
-      stageFor(game),
-    );
+  if (state.phase !== 'level') stopLevelLoop();
+  document.body.dataset.phase = state.phase;
 
-    const bar = facilitatorBar(game);
-    if (bar) {
-      mount(facilitator, bar);
-      facilitator.hidden = false;
-    } else {
-      mount(facilitator);
-      facilitator.hidden = true;
-    }
-  });
+  mount(
+    stageHost,
+    store.connected
+      ? null
+      : h('p', { class: 'notice notice--warn', text: 'Connection lost. Trying to get back in…' }),
+    stageFor(state),
+    state.generation.message && state.phase !== 'generating'
+      ? h('p', { class: 'notice', text: state.generation.message })
+      : null,
+  );
 }
 
 function boot(): void {
-  onRender(renderApp);
   attachSocketLifecycle();
-
-  document.getElementById('leave')?.addEventListener('click', () => {
-    const ok = window.confirm('Leave this room on this device? The rest of the party keeps playing.');
-    if (!ok) return;
-    clearSession();
-    state.screen = 'join';
-    state.game = null;
-    window.history.replaceState({}, '', '/');
-    window.location.reload();
-  });
-
+  onChange(render);
+  document.getElementById('leave')?.addEventListener('click', () => leave());
   render();
+  notify();
 }
 
-boot();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}

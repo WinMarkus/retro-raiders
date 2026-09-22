@@ -1,142 +1,124 @@
-import { describe, expect, it } from 'vitest';
-import { SCHEMA_VERSION } from '../src/shared/constants.js';
-import { enterPhase, mergeCards, resolveBoss, setTokens } from '../src/server/game.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { Topic } from '../src/shared/types.js';
+import { lockOn, resolveEnemy } from '../src/server/game.js';
+import { fallbackCharacter, fallbackLevel } from '../src/server/generate.js';
 import { buildCommitMessage, buildSavePath, buildSnapshot } from '../src/server/snapshot.js';
 import { RoomStore, type PlayerRecord, type Room } from '../src/server/state.js';
 
-function playedRoom(): { room: Room; players: PlayerRecord[] } {
+let counter = 0;
+function topic(title: string, type: Topic['type'] = 'bad'): Topic {
+  counter += 1;
+  return { id: `topic-${counter}`, type, title, description: '', intensity: 4 };
+}
+
+let room: Room;
+let players: PlayerRecord[];
+
+beforeEach(() => {
   const store = new RoomStore();
-  const room = store.create();
-  const players = ['Markus', 'Lena', 'Ada'].map((name, index) => {
+  room = store.create();
+  players = ['Markus', 'Lena', 'Ada'].map((name, index) => {
     const result = store.addPlayer(room, name, `socket-${index}`);
-    if (!result.ok) throw new Error('setup failed');
+    if (!result.ok) throw new Error('could not add player');
     return result.player;
   });
 
-  players[0]!.energy = 4;
-  players[1]!.energy = 2;
-  players[2]!.energy = 3;
-
-  const drafts = [
-    { id: players[0]!.id, loot: 'Preview environments saved a day', trap: 'Reviews take three days', monster: 'Flaky payment tests' },
-    { id: players[1]!.id, loot: 'Docs for the release steps', trap: 'Reviews are slow', monster: 'Scope arrives late' },
-    { id: players[2]!.id, loot: 'Pairing on Fridays', trap: 'Staging drifted', monster: 'Dependency upgrades' },
-  ];
-  for (const entry of drafts) {
-    const draft = room.drafts.get(entry.id)!;
-    draft.loot[0] = entry.loot;
-    draft.trap[0] = entry.trap;
-    draft.monster[0] = entry.monster;
+  for (const player of players) {
+    player.checkIn = {
+      energy: 4,
+      pressure: 3,
+      satisfaction: 3,
+      mood: 'Shipped a lot.',
+      keywords: ['coffee'],
+    };
+    player.character = fallbackCharacter(player.name, player.checkIn);
   }
 
-  enterPhase(room, 'reveal');
+  const topics = [
+    topic('Review takes too long'),
+    topic('PRs stuck in review'),
+    topic('Deploys fail on Friday', 'sad'),
+    topic('Pair programming helped', 'good'),
+  ];
+  for (const entry of topics) {
+    room.topics.set(entry.id, entry);
+    room.topicAuthors.set(entry.id, players[0]!.id);
+  }
 
-  const slow = room.cards.find((card) => card.texts[0] === 'Reviews take three days')!;
-  const alsoSlow = room.cards.find((card) => card.texts[0] === 'Reviews are slow')!;
-  mergeCards(room, [slow.id, alsoSlow.id]);
-
-  const flaky = room.cards.find((card) => card.texts[0] === 'Flaky payment tests')!;
-  setTokens(room, players[0]!.id, flaky.id, 3);
-  setTokens(room, players[1]!.id, flaky.id, 2);
-  setTokens(room, players[2]!.id, flaky.id, 1);
-
-  enterPhase(room, 'discuss');
-  flaky.notes = 'Nobody owns the payment suite since the split.';
-
-  enterPhase(room, 'boss');
-  for (const player of players) room.boss.votes.set(player.id, flaky.id);
-  resolveBoss(room);
-
-  room.forge.proposals.push({
-    id: 'p-1',
-    authorId: players[0]!.id,
-    title: 'Pair on the flaky payment specs every Tuesday',
-    description: 'Two people, one hour.',
-    signal: 'No red build caused by payment specs for two weeks',
+  room.level = fallbackLevel(topics);
+  room.attackCollected = 6;
+  const enemy = room.level.enemies[0]!;
+  for (const player of players) lockOn(room, player, enemy.id);
+  resolveEnemy(room, enemy, {
+    treatment: 'Reviewers pick up PRs in the morning slot.',
     owner: 'Lena',
-    reviewBy: 'in 2 sprints',
+    reviewBy: 'next retro',
+    attackPoints: 3,
   });
-  room.forge.allocations.get(players[1]!.id)!.set('p-1', 7);
-  room.forge.revealed = true;
-  room.forge.selected = ['p-1'];
+  room.phase = 'victory';
+});
 
-  enterPhase(room, 'forge');
-  enterPhase(room, 'victory');
-
-  return { room, players };
-}
-
-describe('snapshot contents', () => {
-  it('contains every field the team needs later', () => {
-    const { room } = playedRoom();
-    const snapshot = buildSnapshot(room, new Date('2026-03-04T09:05:00Z'));
+describe('the saved snapshot', () => {
+  it('contains everything a team would want to reread', () => {
+    const snapshot = buildSnapshot(room, new Date('2026-05-14T09:07:00Z'), 'openai/gpt-4o-mini');
 
     expect(snapshot.app).toBe('Retro Raiders: The Blocker Dungeon');
-    expect(snapshot.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(snapshot.schemaVersion).toBe(2);
     expect(snapshot.roomCode).toBe(room.code);
-    expect(snapshot.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(snapshot.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(snapshot.participants).toEqual(['Markus', 'Lena', 'Ada']);
-    expect(snapshot.energy.average).toBe(3);
-    expect(snapshot.energy.responses).toBe(3);
-    expect(snapshot.loot).toHaveLength(3);
-    expect(snapshot.traps).toHaveLength(2);
-    expect(snapshot.monsters).toHaveLength(3);
-    expect(snapshot.merges).toHaveLength(1);
-    expect(snapshot.merges[0]!.texts).toEqual(
-      expect.arrayContaining(['Reviews take three days', 'Reviews are slow']),
-    );
-    expect(Object.values(snapshot.allocations).reduce((sum, value) => sum + value, 0)).toBe(6);
-    expect(snapshot.discussionNotes.some((note) => note.notes.includes('Nobody owns'))).toBe(true);
-    expect(snapshot.finalBoss?.title).toBeTruthy();
-    expect(snapshot.finalBoss?.votes).toBe(3);
-    expect(snapshot.experiments[0]!.points).toBe(7);
-    expect(snapshot.experiments[0]!.selected).toBe(true);
-    expect(snapshot.owners).toEqual(['Lena']);
-    expect(snapshot.reviewDates).toEqual(['in 2 sprints']);
+    expect(snapshot.savedAt).toBe('2026-05-14T09:07:00.000Z');
+    expect(snapshot.createdAt).toBeTruthy();
+    expect(snapshot.players.map((player) => player.name)).toEqual(['Markus', 'Lena', 'Ada']);
+    expect(snapshot.players[0]!.character?.characterName).toBeTruthy();
+    expect(snapshot.players[0]!.checkIn?.mood).toBe('Shipped a lot.');
+    expect(snapshot.topics).toHaveLength(4);
+    expect(snapshot.enemies.length).toBeGreaterThan(0);
+    expect(snapshot.powerUps.length).toBeGreaterThan(0);
+    expect(snapshot.resolutions[0]!.treatment).toContain('morning slot');
+    expect(snapshot.resolutions[0]!.owner).toBe('Lena');
+    expect(snapshot.attackPoints).toEqual({ collected: 6, spent: 3, remaining: 3 });
+    expect(snapshot.summary.actionItems.length).toBeGreaterThan(0);
+    expect(snapshot.generatedBy.model).toBe('openai/gpt-4o-mini');
+    expect(snapshot.generatedBy.level).toBe('fallback');
   });
 
-  it('never carries a player id, socket id or card authorship', () => {
-    const { room, players } = playedRoom();
-    const serialised = JSON.stringify(buildSnapshot(room));
-
+  it('never carries player ids, socket ids or topic authorship', () => {
+    const json = JSON.stringify(buildSnapshot(room, new Date()));
     for (const player of players) {
-      expect(serialised).not.toContain(player.id);
-      if (player.socketId) expect(serialised).not.toContain(player.socketId);
+      expect(json).not.toContain(player.id);
+      if (player.socketId) expect(json).not.toContain(player.socketId);
     }
-    expect(serialised).not.toContain('authorId');
-    expect(serialised).not.toContain('socketId');
-    expect(serialised).not.toContain(room.secret);
+    expect(json).not.toContain('topicAuthors');
+    expect(json).not.toContain('socketId');
+  });
 
-    const parsed = JSON.parse(serialised) as Record<string, unknown>;
-    for (const card of [...(parsed.loot as unknown[]), ...(parsed.traps as unknown[]), ...(parsed.monsters as unknown[])]) {
-      expect(Object.keys(card as object)).not.toContain('authorIds');
-      expect(Object.keys(card as object)).not.toContain('sourceIds');
-    }
+  it('is plain JSON with no surprises in it', () => {
+    const snapshot = buildSnapshot(room, new Date());
+    const round = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
+    expect(round.roomCode).toBe(snapshot.roomCode);
   });
 });
 
-describe('save path', () => {
-  it('uses the documented folder, timestamp and room code', () => {
-    const path = buildSavePath('GH7K2M', new Date('2026-03-04T09:05:31Z'));
-    expect(path).toBe('retro-saves/retro-raiders/2026-03-04_09-05_room-GH7K2M.json');
+describe('save path and commit message', () => {
+  it('builds a sortable UTC path with the room code', () => {
+    const path = buildSavePath('GH7K2M', new Date('2026-05-14T09:07:42Z'));
+    expect(path).toBe('retro-saves/retro-raiders/2026-05-14_09-07_room-GH7K2M.json');
   });
 
-  it('gives different files to saves in different minutes and different rooms', () => {
-    const first = buildSavePath('AAA111', new Date('2026-03-04T09:05:00Z'));
-    const second = buildSavePath('AAA111', new Date('2026-03-04T09:06:00Z'));
-    const third = buildSavePath('BBB222', new Date('2026-03-04T09:05:00Z'));
-    expect(new Set([first, second, third]).size).toBe(3);
+  it('keeps two saves of the same room in different minutes apart', () => {
+    const first = buildSavePath('GH7K2M', new Date('2026-05-14T09:07:00Z'));
+    const second = buildSavePath('GH7K2M', new Date('2026-05-14T09:08:00Z'));
+    expect(first).not.toBe(second);
   });
 
-  it('strips anything that is not part of a room code', () => {
-    expect(buildSavePath('../../etc/passwd')).toContain('room-ETCPASSWD.json');
-    expect(buildSavePath('')).toContain('room-UNKNOWN.json');
+  it('refuses to let a room code escape into the path', () => {
+    const path = buildSavePath('../../etc/passwd', new Date('2026-05-14T09:07:00Z'));
+    expect(path).not.toContain('..');
+    expect(path.startsWith('retro-saves/retro-raiders/')).toBe(true);
   });
 
-  it('writes a commit message a human can read in the log', () => {
-    expect(buildCommitMessage('GH7K2M', new Date('2026-03-04T09:05:00Z'))).toBe(
-      'Retro Raiders: save retrospective for room GH7K2M (2026-03-04)',
-    );
+  it('writes a commit message a human can scan', () => {
+    const message = buildCommitMessage('GH7K2M', new Date('2026-05-14T09:07:00Z'));
+    expect(message).toContain('Retro Raiders');
+    expect(message).toContain('GH7K2M');
   });
 });

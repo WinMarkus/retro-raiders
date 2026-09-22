@@ -14,7 +14,12 @@ services:
         value: "22"
       - key: NODE_ENV
         value: production
-      # Optional. Without these the game runs fine and Markus gets "Download JSON".
+      # Optional. Without a key the local generator builds the dungeon.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o-mini
+      # Optional. Without these Markus gets "Download JSON" instead of saving.
       # Set the values in the Render dashboard, never in this file.
       - key: GITHUB_TOKEN
         sync: false

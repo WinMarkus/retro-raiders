@@ -1,266 +1,139 @@
-import { CATEGORY_META } from '../../shared/constants.js';
-import type { GameState, SummaryCard } from '../../shared/types.js';
+import type { GameState } from '../../shared/types.js';
 import { h, prefersReducedMotion } from '../dom.js';
-import { downloadSnapshot, render, saveToGithub, state, toast } from '../store.js';
-import { button, emptyState, panel } from './ui.js';
+import { act, downloadSnapshot, saveToGithub, toast } from '../store.js';
+import { button, characterCard, emptyState, panel } from './ui.js';
 
-function cardList(cards: SummaryCard[], emptyMessage: string): HTMLElement {
-  if (cards.length === 0) return emptyState(emptyMessage);
-  return h(
-    'ul',
-    { class: 'summary-list' },
-    ...cards.map((card) =>
-      h(
-        'li',
-        { class: `summary-list__item summary-list__item--${card.category}` },
-        h(
-          'div',
-          { class: 'summary-list__texts' },
-          ...card.texts.map((text) => h('p', { class: 'summary-list__text', text })),
+let saving = false;
+
+export function renderVictory(state: GameState): HTMLElement {
+  const summary = state.summary;
+  if (!summary) return panel('Victory', emptyState('No summary yet.'));
+
+  const confetti = prefersReducedMotion()
+    ? null
+    : h(
+        'div',
+        { class: 'confetti', 'aria-hidden': 'true' },
+        ...Array.from({ length: 40 }, (_, index) =>
+          h('i', { style: `--i:${index}; --hue:${(index * 37) % 360}` }),
         ),
-        h('span', { class: 'summary-list__tokens', text: `${card.tokens}` }),
-      ),
-    ),
-  );
-}
+      );
 
-function confetti(): HTMLElement {
-  const host = h('div', { class: 'confetti', 'aria-hidden': 'true' });
-  if (prefersReducedMotion()) return host;
-  const glyphs = ['💰', '🗝️', '⚔️', '🛡️', '✨', '🪙'];
-  for (let i = 0; i < 18; i += 1) {
-    host.appendChild(
-      h('span', {
-        class: 'confetti__bit',
-        style: `left:${Math.round((i / 18) * 100)}%; animation-delay:${(i % 6) * 0.25}s`,
-        text: glyphs[i % glyphs.length],
-      }),
-    );
-  }
-  return host;
-}
-
-function saveBlock(game: GameState): HTMLElement | null {
-  if (!game.canSaveToGithub) return null;
-
-  const status = game.save;
-  const saving = status.status === 'saving' || state.pendingSave;
-
-  const onSave = async (): Promise<void> => {
-    if (saving) return;
-    state.pendingSave = true;
-    render();
-    const result = await saveToGithub();
-    state.pendingSave = false;
-    if (result?.ok && result.url) toast('Retro committed to GitHub.', 'success');
-    else if (result?.error) toast(result.error, 'error');
-    render();
-  };
-
-  const onDownload = async (): Promise<void> => {
-    const result = await downloadSnapshot();
-    if (!result?.ok || !result.json) {
-      toast(result?.error ?? 'Could not build the export.', 'error');
-      return;
-    }
-    const blob = new Blob([result.json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = h('a', { href: url, download: result.filename ?? 'retro.json' });
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    toast('JSON downloaded.', 'success');
-  };
-
-  return panel(
-    'Save the chronicle',
-    'Only the player named Markus sees this, and the server checks the name again before it writes anything.',
-    !game.githubConfigured
-      ? h('p', {
-          class: 'notice notice--warn',
-          text: 'GitHub saving is not configured on this server (GITHUB_TOKEN, GITHUB_OWNER and GITHUB_REPO). The download below always works.',
-        })
-      : null,
-    h(
-      'div',
-      { class: 'actions' },
-      button(saving ? 'Saving…' : 'Save retro to GitHub', {
-        class: 'btn--primary',
-        disabled: saving,
-        onClick: () => void onSave(),
-      }),
-      button('Download JSON', { class: 'btn--ghost', onClick: () => void onDownload() }),
-    ),
-    status.status === 'saved' && status.url
-      ? h(
-          'p',
-          { class: 'notice notice--ok' },
-          'Committed: ',
-          h('a', { class: 'link', href: status.url, target: '_blank', rel: 'noreferrer noopener', text: status.url }),
-        )
-      : null,
-    status.status === 'error' && status.message
-      ? h('p', { class: 'notice notice--error', role: 'alert', text: status.message })
-      : null,
-    status.status === 'saved' && status.message
-      ? h('p', { class: 'field__hint', text: status.message })
-      : null,
-  );
-}
-
-export function renderVictory(game: GameState): HTMLElement {
-  const summary = game.summary;
-  if (!summary) {
-    return panel('No summary yet', 'The raid has not finished.', emptyState('Nothing to show.'));
-  }
-
-  const selected = summary.experiments.filter((experiment) => experiment.selected);
-  const others = summary.experiments.filter((experiment) => !experiment.selected);
-
-  const header = h(
-    'section',
-    { class: 'victory' },
-    confetti(),
-    h('p', { class: 'victory__kicker', text: `Room ${game.code} · raid complete` }),
-    h('h2', { class: 'victory__title', text: 'The party made it out' }),
-    h(
-      'div',
-      { class: 'victory__stats' },
-      h(
-        'div',
-        { class: 'stat' },
-        h('span', { class: 'stat__value', text: String(summary.participants.length) }),
-        h('span', { class: 'stat__label', text: 'raiders' }),
-      ),
-      h(
-        'div',
-        { class: 'stat' },
-        h('span', {
-          class: 'stat__value',
-          text: summary.averageEnergy === null ? '—' : summary.averageEnergy.toFixed(1),
-        }),
-        h('span', { class: 'stat__label', text: 'average starting energy' }),
-      ),
-      h(
-        'div',
-        { class: 'stat' },
-        h('span', { class: 'stat__value', text: String(summary.loot.length) }),
-        h('span', { class: 'stat__label', text: 'loot found' }),
-      ),
-      h(
-        'div',
-        { class: 'stat' },
-        h('span', { class: 'stat__value', text: String(summary.traps.length + summary.monsters.length) }),
-        h('span', { class: 'stat__label', text: 'traps and monsters' }),
-      ),
-    ),
-    h('p', { class: 'victory__party', text: summary.participants.join(' · ') }),
-  );
-
-  const boss = summary.boss
-    ? panel(
-        'The boss we named',
-        `${CATEGORY_META[summary.boss.category].room} · ${summary.boss.votes} votes`,
-        h(
-          'div',
-          { class: 'boss boss--small' },
-          h('h3', { class: 'boss__title', text: summary.boss.title }),
-          h('ul', { class: 'boss__texts' }, ...summary.boss.texts.map((text) => h('li', { class: 'boss__text', text }))),
-        ),
-      )
-    : panel('No boss', 'The party skipped the vote.', emptyState('Nothing was crowned.'));
-
-  const experiments = panel(
-    'Weapons we carry',
-    selected.length ? 'Reviewed on the dates below.' : 'Nothing was selected.',
-    selected.length
-      ? h(
-          'div',
-          { class: 'weapons' },
-          ...selected.map((experiment) =>
-            h(
-              'article',
-              { class: 'weapon weapon--selected' },
-              h('h4', { class: 'weapon__title', text: experiment.title }),
-              experiment.description ? h('p', { class: 'weapon__body', text: experiment.description }) : null,
-              h(
-                'dl',
-                { class: 'weapon__facts' },
-                h('dt', { text: 'We will know it helped when' }),
-                h('dd', { text: experiment.signal }),
-                h('dt', { text: 'Owner' }),
-                h('dd', { text: experiment.owner || 'The whole party' }),
-                h('dt', { text: 'Review' }),
-                h('dd', { text: experiment.reviewBy }),
-                h('dt', { text: 'Forge points' }),
-                h('dd', { text: String(experiment.points) }),
-              ),
-            ),
-          ),
-        )
-      : emptyState('No experiment selected.', 'The facilitator can step back to the forge and pick one.'),
-    others.length
-      ? h(
-          'details',
-          { class: 'details' },
-          h('summary', { text: `Also proposed (${others.length})` }),
-          h(
-            'ul',
-            { class: 'summary-list' },
-            ...others.map((experiment) =>
-              h(
-                'li',
-                { class: 'summary-list__item' },
-                h('div', { class: 'summary-list__texts' }, h('p', { class: 'summary-list__text', text: experiment.title })),
-                h('span', { class: 'summary-list__tokens', text: String(experiment.points) }),
-              ),
-            ),
-          ),
-        )
-      : null,
-  );
-
-  const notes = summary.discussed.filter((card) => card.notes.trim().length > 0);
+  const heroes = state.players
+    .map((player) => player.character)
+    .filter((character): character is NonNullable<typeof character> => Boolean(character));
 
   return h(
     'div',
-    { class: 'grid grid--wide' },
-    header,
+    { class: 'stage stage--victory' },
+    confetti,
+    h(
+      'header',
+      { class: 'victory__head' },
+      h('h2', { class: 'victory__title', text: 'Victory Report' }),
+      h('p', { class: 'victory__headline', text: summary.headline }),
+      h(
+        'ul',
+        { class: 'victory__stats' },
+        ...summary.stats.map((stat) =>
+          h('li', {}, h('span', { text: stat.title }), h('strong', { text: stat.value })),
+        ),
+      ),
+    ),
+    panel(
+      'Action items',
+      summary.actionItems.length === 0
+        ? emptyState('Nothing was pinned down — worth a short follow-up.')
+        : h('ol', { class: 'action-list' }, ...summary.actionItems.map((item) => h('li', { text: item }))),
+    ),
+    panel(
+      'Frozen enemies',
+      summary.resolved.length === 0
+        ? emptyState('No enemy was resolved in this run.')
+        : h(
+            'ul',
+            { class: 'result-list' },
+            ...summary.resolved.map((resolution) =>
+              h(
+                'li',
+                { class: 'result' },
+                h('h3', { class: 'result__title', text: `❄ ${resolution.enemyName}` }),
+                h('p', { class: 'result__text', text: resolution.treatment }),
+                h('p', {
+                  class: 'result__meta',
+                  text: `${resolution.owner ?? 'unowned'} · review ${resolution.reviewBy} · ${
+                    resolution.attackSpent
+                  } attack · ${resolution.party.join(', ')}`,
+                }),
+              ),
+            ),
+          ),
+    ),
+    summary.unresolved.length > 0
+      ? panel(
+          'Still standing',
+          h(
+            'ul',
+            { class: 'result-list' },
+            ...summary.unresolved.map((enemy) =>
+              h(
+                'li',
+                { class: 'result result--open' },
+                h('h3', { class: 'result__title', text: enemy.name }),
+                h('p', { class: 'result__text', text: enemy.description }),
+                h('p', { class: 'result__meta', text: enemy.sourceTopics.join(' · ') }),
+              ),
+            ),
+          ),
+        )
+      : null,
+    panel('The party', h('div', { class: 'hero-grid' }, ...heroes.map(characterCard))),
+    state.canSave ? savePanel(state) : null,
+    state.you.isFacilitator
+      ? h('div', { class: 'row' }, button('Back to the dungeon', () => void act('phase:back'), 'ghost'))
+      : null,
+  );
+}
+
+function savePanel(state: GameState): HTMLElement {
+  const save = async (): Promise<void> => {
+    if (saving) return;
+    saving = true;
+    const result = await saveToGithub();
+    saving = false;
+    toast(result.ok ? 'Saved to GitHub.' : result.error);
+  };
+
+  return panel(
+    'Save this retro',
+    state.githubConfigured
+      ? h('p', { class: 'field__hint', text: 'Commits the session JSON to the configured repository.' })
+      : h('p', {
+          class: 'notice',
+          text: 'GitHub is not configured on the server, so only the download is available.',
+        }),
     h(
       'div',
-      { class: 'grid grid--two' },
-      boss,
-      experiments,
-      panel('Loot', 'What helped.', cardList(summary.loot, 'No loot was packed.')),
-      panel(
-        'Traps and monsters that mattered',
-        'Ranked by tokens.',
-        cardList([...summary.traps, ...summary.monsters].sort((a, b) => b.tokens - a.tokens).slice(0, 8), 'Nothing collected tokens.'),
-      ),
-      panel(
-        'Notes from the discussion',
-        notes.length ? 'Captured live by the party.' : 'Nobody wrote anything down.',
-        notes.length
-          ? h(
-              'ul',
-              { class: 'summary-list' },
-              ...notes.map((card) =>
-                h(
-                  'li',
-                  { class: `summary-list__item summary-list__item--${card.category}` },
-                  h(
-                    'div',
-                    { class: 'summary-list__texts' },
-                    ...card.texts.map((text) => h('p', { class: 'summary-list__text', text })),
-                    h('p', { class: 'summary-list__note', text: card.notes }),
-                  ),
-                ),
-              ),
-            )
-          : emptyState('No notes.'),
-      ),
-      saveBlock(game),
+      { class: 'row' },
+      state.githubConfigured
+        ? button(
+            state.save.status === 'saving' ? 'Saving…' : 'Save retro to GitHub',
+            () => void save(),
+            'primary',
+            state.save.status === 'saving' || state.save.status === 'saved',
+          )
+        : null,
+      button('Download JSON', () => void downloadSnapshot(), 'ghost'),
     ),
+    state.save.status === 'saved' && state.save.url
+      ? h(
+          'p',
+          { class: 'notice notice--ok' },
+          h('a', { class: 'link', href: state.save.url, target: '_blank', rel: 'noreferrer', text: 'View the saved file on GitHub' }),
+        )
+      : null,
+    state.save.status === 'error' && state.save.message
+      ? h('p', { class: 'notice notice--error', text: state.save.message })
+      : null,
   );
 }

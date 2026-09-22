@@ -1,22 +1,20 @@
-import type { ActionResult, DownloadResult, GameState, JoinResult, SaveResult } from '../shared/types.js';
-
-export interface ClientSocket {
-  id?: string;
-  connected: boolean;
-  on(event: string, handler: (...args: never[]) => void): void;
-  emit(event: string, payload?: unknown, ack?: (result: never) => void): void;
-}
+import type {
+  ActionResult,
+  DownloadResult,
+  GameState,
+  JoinResult,
+  MoveBroadcast,
+  Point,
+  SaveResult,
+} from '../shared/types.js';
 
 declare const io: (options?: Record<string, unknown>) => ClientSocket;
 
-export type Connection = 'connecting' | 'online' | 'offline';
-
-export interface ClientState {
-  screen: 'join' | 'game';
-  connection: Connection;
-  joinError: string | null;
-  game: GameState | null;
-  pendingSave: boolean;
+export interface ClientSocket {
+  id: string;
+  connected: boolean;
+  on(event: string, handler: (...args: never[]) => void): void;
+  emit(event: string, payload?: unknown, ack?: (result: unknown) => void): void;
 }
 
 const SESSION_KEY = 'retro-raiders-session';
@@ -24,16 +22,14 @@ const SESSION_KEY = 'retro-raiders-session';
 export interface Session {
   code: string;
   playerId: string;
-  name: string;
 }
 
 export function loadSession(): Session | null {
   try {
-    const raw = window.sessionStorage.getItem(SESSION_KEY);
+    const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<Session>;
-    if (!parsed.code || !parsed.playerId) return null;
-    return { code: parsed.code, playerId: parsed.playerId, name: parsed.name ?? '' };
+    const parsed = JSON.parse(raw) as Session;
+    return parsed.code && parsed.playerId ? parsed : null;
   } catch {
     return null;
   }
@@ -41,7 +37,7 @@ export function loadSession(): Session | null {
 
 export function saveSession(session: Session): void {
   try {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
   } catch {
     /* private mode: the game still works, reconnecting just needs a re-join */
   }
@@ -49,125 +45,140 @@ export function saveSession(session: Session): void {
 
 export function clearSession(): void {
   try {
-    window.sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
   } catch {
     /* ignore */
   }
 }
 
-export const state: ClientState = {
-  screen: 'join',
-  connection: 'connecting',
-  joinError: null,
-  game: null,
-  pendingSave: false,
-};
-
 export const socket: ClientSocket = io({ transports: ['websocket', 'polling'] });
 
-let renderer: () => void = () => {};
+export const store = {
+  state: null as GameState | null,
+  connected: false,
+  joinError: null as string | null,
+  /** Positions of other players, patched by the lightweight move broadcast. */
+  positions: new Map<string, Point>(),
+};
 
-export function onRender(fn: () => void): void {
-  renderer = fn;
+type Listener = () => void;
+const listeners: Listener[] = [];
+
+export function onChange(listener: Listener): void {
+  listeners.push(listener);
 }
 
-export function render(): void {
-  renderer();
+export function notify(): void {
+  for (const listener of listeners) listener();
 }
 
-/* ------------------------------------------------------------- emitting -- */
-
-export function emit<T>(event: string, payload?: unknown): Promise<T> {
-  return new Promise<T>((resolve) => {
-    socket.emit(event, payload ?? {}, ((result: T) => resolve(result)) as never);
+function call<T>(event: string, payload?: unknown): Promise<T> {
+  return new Promise((resolve) => {
+    socket.emit(event, payload ?? {}, (result: unknown) => resolve(result as T));
   });
 }
 
-/** Fire an action and surface any server complaint as a toast. */
-export async function act(event: string, payload?: unknown): Promise<ActionResult> {
-  const result = await emit<ActionResult>(event, payload);
-  if (result && result.ok === false && result.error) toast(result.error, 'error');
-  return result ?? { ok: false, error: 'No answer from the server.' };
+export function act(event: string, payload?: unknown): Promise<ActionResult> {
+  return call<ActionResult>(event, payload).then((result) => {
+    if (result && result.ok === false) toast(result.error);
+    return result;
+  });
 }
 
-export function join(event: 'room:create' | 'room:join', payload: unknown): Promise<JoinResult> {
-  return emit<JoinResult>(event, payload);
+export async function createRoom(name: string): Promise<void> {
+  const result = await call<JoinResult>('room:create', { name });
+  handleJoin(result);
+}
+
+export async function joinRoom(name: string, code: string): Promise<void> {
+  const result = await call<JoinResult>('room:join', { name, code });
+  handleJoin(result);
+}
+
+function handleJoin(result: JoinResult): void {
+  if (result.ok) {
+    saveSession({ code: result.code, playerId: result.playerId });
+    store.joinError = null;
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', result.code);
+    window.history.replaceState({}, '', url.toString());
+  } else {
+    store.joinError = result.error;
+  }
+  notify();
 }
 
 export function saveToGithub(): Promise<SaveResult> {
-  return emit<SaveResult>('save:github', {});
+  return call<SaveResult>('save:github');
 }
 
-export function downloadSnapshot(): Promise<DownloadResult> {
-  return emit<DownloadResult>('save:download', {});
+export async function downloadSnapshot(): Promise<void> {
+  const result = await call<DownloadResult>('save:download');
+  if (!result.ok) {
+    toast(result.error);
+    return;
+  }
+  const blob = new Blob([result.json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = result.filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/* --------------------------------------------------------------- toasts -- */
-
-export function toast(message: string, kind: 'info' | 'error' | 'success' = 'info'): void {
+export function toast(message: string): void {
   const host = document.getElementById('toasts');
   if (!host) return;
   const node = document.createElement('div');
-  node.className = `toast toast--${kind}`;
-  node.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  node.className = 'toast';
   node.textContent = message;
   host.appendChild(node);
-  window.setTimeout(() => {
-    node.classList.add('toast--leaving');
-    window.setTimeout(() => node.remove(), 400);
-  }, 4200);
+  setTimeout(() => node.classList.add('toast--out'), 4000);
+  setTimeout(() => node.remove(), 4600);
 }
 
-/* ----------------------------------------------------------- reconnect -- */
-
 export function attachSocketLifecycle(): void {
-  socket.on('connect', (() => {
-    state.connection = 'online';
+  socket.on('connect', () => {
+    store.connected = true;
     const session = loadSession();
     if (session) {
-      void emit<JoinResult>('room:rejoin', { code: session.code, playerId: session.playerId }).then(
-        (result) => {
-          if (result?.ok) {
-            state.screen = 'game';
-          } else {
-            clearSession();
-            state.screen = 'join';
-            state.game = null;
-            state.joinError = result?.error ?? null;
-          }
-          render();
-        },
-      );
+      socket.emit('room:rejoin', session, (result: unknown) => {
+        const join = result as JoinResult;
+        if (!join.ok) {
+          clearSession();
+          store.state = null;
+        }
+        notify();
+      });
     }
-    render();
-  }) as never);
+    notify();
+  });
 
-  socket.on('disconnect', (() => {
-    state.connection = 'offline';
-    render();
-  }) as never);
+  socket.on('disconnect', () => {
+    store.connected = false;
+    notify();
+  });
 
-  socket.on('connect_error', (() => {
-    state.connection = 'offline';
-    render();
-  }) as never);
+  socket.on('state', ((state: GameState) => {
+    store.state = state;
+    for (const player of state.players) store.positions.set(player.id, player.position);
+    notify();
+  }) as (...args: never[]) => void);
 
-  socket.on('state', ((game: GameState) => {
-    state.game = game;
-    state.screen = 'game';
-    render();
-  }) as never);
+  socket.on('player:moved', ((move: MoveBroadcast) => {
+    store.positions.set(move.playerId, move.position);
+    window.dispatchEvent(new CustomEvent('party:moved', { detail: move }));
+  }) as (...args: never[]) => void);
 
-  socket.on('discuss:tick', ((payload: { secondsLeft: number; running: boolean }) => {
-    if (!state.game?.discussion) return;
-    state.game.discussion.secondsLeft = payload.secondsLeft;
-    state.game.discussion.running = payload.running;
-    const clock = document.getElementById('discussion-clock');
-    if (clock) {
-      const minutes = Math.floor(Math.max(0, payload.secondsLeft) / 60);
-      const seconds = Math.max(0, payload.secondsLeft) % 60;
-      clock.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
-      clock.classList.toggle('clock--low', payload.secondsLeft <= 30);
-    }
-  }) as never);
+  socket.on('notice', ((notice: { message: string }) => {
+    toast(notice.message);
+  }) as (...args: never[]) => void);
+}
+
+export function leave(): void {
+  clearSession();
+  window.location.href = window.location.pathname;
 }

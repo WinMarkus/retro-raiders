@@ -35,4 +35,6 @@ export const RATE_LIMITS = {
   text: { limit: 240, windowMs: 60_000 },
   action: { limit: 300, windowMs: 60_000 },
   save: { limit: 5, windowMs: 60_000 },
+  /** AI calls cost money and take seconds — per room, not per socket. */
+  ai: { limit: 6, windowMs: 10 * 60_000 },
 } as const;
