@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Retro Raiders: The Blocker Dungeon — a cooperative retrospective game for distributed software teams."
+    />
+    <title>Retro Raiders: The Blocker Dungeon</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="body--join">
+    <a class="skip-link" href="#stage">Skip to the dungeon</a>
+
+    <div class="torch torch--left" aria-hidden="true">
+      <span class="torch__flame"></span>
+      <span class="torch__stick"></span>
+    </div>
+    <div class="torch torch--right" aria-hidden="true">
+      <span class="torch__flame"></span>
+      <span class="torch__stick"></span>
+    </div>
+
+    <header class="topbar" id="topbar"></header>
+
+    <main class="stage" id="stage"></main>
+
+    <footer class="facilitator" id="facilitator" hidden></footer>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <div class="sitefoot">
+      <span>No accounts, no database, no trackers. Rooms live in server memory until everyone leaves.</span>
+      <button type="button" class="linkish" id="leave">Leave this room</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="module" src="/js/client/main.js"></script>
+    <noscript>
+      <p class="notice notice--warn">
+        Retro Raiders needs JavaScript: the dungeon is drawn live for every player.
+      </p>
+    </noscript>
+  </body>
+</html>
