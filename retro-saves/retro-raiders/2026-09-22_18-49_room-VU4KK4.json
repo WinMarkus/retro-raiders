@@ -1,0 +1,391 @@
+{
+  "app": "Retro Raiders: The Blocker Dungeon",
+  "schemaVersion": 2,
+  "roomCode": "VU4KK4",
+  "createdAt": "2026-09-22T13:26:48.663Z",
+  "savedAt": "2026-09-22T18:49:01.062Z",
+  "generatedBy": {
+    "characters": "ai",
+    "level": "ai",
+    "model": "openai/gpt-4o-mini"
+  },
+  "players": [
+    {
+      "name": "Markus",
+      "character": {
+        "playerName": "Markus",
+        "characterName": "Caffeinated Canine Sorcerer",
+        "className": "Java Jester",
+        "description": "A magical barista who wields the power of caffeine and dog affection. Fueled by coffee, he spreads joy through sugary spells and playful barks.",
+        "skill": "Morning Brew: Instantly boosts everyone's energy by 2 for a short time!",
+        "weakness": "Cannot function without a daily dose of coffee and belly rubs.",
+        "attack": 5,
+        "support": 2,
+        "avatarPrompt": "A wizard with a coffee cup and a small dog by his side, surrounded by magical coffee beans.",
+        "emoji": "🎻",
+        "hue": 332,
+        "source": "ai"
+      },
+      "checkIn": {
+        "energy": 5,
+        "pressure": 5,
+        "satisfaction": 2,
+        "mood": "Tired but rocking it!",
+        "keywords": [
+          "coffee",
+          "sugar",
+          "dog"
+        ]
+      }
+    },
+    {
+      "name": "Winnie",
+      "character": {
+        "playerName": "Winnie",
+        "characterName": "The Rested Mage",
+        "className": "Tierd Wizard",
+        "description": "Winnie can cast the powerful spell of 'Naptime', restoring energy to all allies. However, she can't resist the urge to yawn at the most inopportune moments.",
+        "skill": "Naptime Restoration",
+        "weakness": "Instant sleeping",
+        "attack": 4,
+        "support": 5,
+        "avatarPrompt": "A cozy wizard with a magic staff shaped like a pillow, wearing pajama robes.",
+        "emoji": "🎻",
+        "hue": 204,
+        "source": "ai"
+      },
+      "checkIn": {
+        "energy": 5,
+        "pressure": 4,
+        "satisfaction": 4,
+        "mood": "I am Tierd",
+        "keywords": []
+      }
+    }
+  ],
+  "topics": [
+    {
+      "id": "topic-491343d1-9f9",
+      "type": "good",
+      "title": "Meeting my teammates",
+      "description": "",
+      "intensity": 4
+    },
+    {
+      "id": "topic-9c056ffc-543",
+      "type": "bad",
+      "title": "Not sleeping well",
+      "description": "",
+      "intensity": 3
+    },
+    {
+      "id": "topic-dff20709-dfa",
+      "type": "good",
+      "title": "Meeting my Team mate",
+      "description": "",
+      "intensity": 3
+    },
+    {
+      "id": "topic-94e9db20-aee",
+      "type": "sad",
+      "title": "Mani not here alreaady in second week",
+      "description": "",
+      "intensity": 3
+    },
+    {
+      "id": "topic-254a5da6-689",
+      "type": "bad",
+      "title": "Meeting Bad people",
+      "description": "",
+      "intensity": 3
+    },
+    {
+      "id": "topic-592fa408-4f5",
+      "type": "sad",
+      "title": "Seeing you",
+      "description": "",
+      "intensity": 3
+    }
+  ],
+  "level": {
+    "title": "The Retrospective Dungeon",
+    "intro": "Brave adventurers must navigate through the dark corners of a software team's retrospective, facing the challenges that haunt their productivity.",
+    "enemies": [
+      {
+        "id": "enemy-the-sleep-thief-0",
+        "name": "The Sleep Thief",
+        "kind": "minion",
+        "description": "A sneaky creature that drains the energy of all who cross its path, leaving them lethargic and unfocused.",
+        "sourceTopics": [
+          "Not sleeping well"
+        ],
+        "strength": 3,
+        "position": {
+          "x": 585,
+          "y": 331
+        },
+        "status": "resolved",
+        "lockedBy": []
+      },
+      {
+        "id": "enemy-the-social-saboteur-1",
+        "name": "The Social Saboteur",
+        "kind": "minion",
+        "description": "A tricky foe that disrupts teamwork, spreading negativity and confusion among the group.",
+        "sourceTopics": [
+          "Meeting Bad people"
+        ],
+        "strength": 3,
+        "position": {
+          "x": 366,
+          "y": 306
+        },
+        "status": "resolved",
+        "lockedBy": []
+      },
+      {
+        "id": "enemy-the-absence-apparition-2",
+        "name": "The Absence Apparition",
+        "kind": "miniboss",
+        "description": "A specter that haunts the team with feelings of loss, reminding them of those who are not present.",
+        "sourceTopics": [
+          "Mani not here alreaady in second week",
+          "Seeing you"
+        ],
+        "strength": 4,
+        "position": {
+          "x": 663,
+          "y": 274
+        },
+        "status": "resolved",
+        "lockedBy": []
+      }
+    ],
+    "powerUps": [
+      {
+        "id": "powerup-teamwork-elixir-0",
+        "name": "Teamwork Elixir",
+        "description": "A potent drink that boosts morale and enhances collaboration among teammates.",
+        "sourceTopics": [
+          "Meeting my teammates",
+          "Meeting my Team mate"
+        ],
+        "attackPoints": 5,
+        "position": {
+          "x": 614,
+          "y": 351
+        },
+        "collectedBy": "Markus"
+      },
+      {
+        "id": "powerup-courageous-charm-1",
+        "name": "Courageous Charm",
+        "description": "A magical charm that grants the wearer confidence to tackle challenges head-on.",
+        "sourceTopics": [
+          "Meeting my teammates"
+        ],
+        "attackPoints": 4,
+        "position": {
+          "x": 283,
+          "y": 372
+        },
+        "collectedBy": "Markus"
+      }
+    ],
+    "source": "ai",
+    "generatedAt": 1790083936859,
+    "note": null
+  },
+  "enemies": [
+    {
+      "id": "enemy-the-sleep-thief-0",
+      "name": "The Sleep Thief",
+      "kind": "minion",
+      "description": "A sneaky creature that drains the energy of all who cross its path, leaving them lethargic and unfocused.",
+      "sourceTopics": [
+        "Not sleeping well"
+      ],
+      "strength": 3,
+      "position": {
+        "x": 585,
+        "y": 331
+      },
+      "status": "resolved",
+      "lockedBy": []
+    },
+    {
+      "id": "enemy-the-social-saboteur-1",
+      "name": "The Social Saboteur",
+      "kind": "minion",
+      "description": "A tricky foe that disrupts teamwork, spreading negativity and confusion among the group.",
+      "sourceTopics": [
+        "Meeting Bad people"
+      ],
+      "strength": 3,
+      "position": {
+        "x": 366,
+        "y": 306
+      },
+      "status": "resolved",
+      "lockedBy": []
+    },
+    {
+      "id": "enemy-the-absence-apparition-2",
+      "name": "The Absence Apparition",
+      "kind": "miniboss",
+      "description": "A specter that haunts the team with feelings of loss, reminding them of those who are not present.",
+      "sourceTopics": [
+        "Mani not here alreaady in second week",
+        "Seeing you"
+      ],
+      "strength": 4,
+      "position": {
+        "x": 663,
+        "y": 274
+      },
+      "status": "resolved",
+      "lockedBy": []
+    }
+  ],
+  "powerUps": [
+    {
+      "id": "powerup-teamwork-elixir-0",
+      "name": "Teamwork Elixir",
+      "description": "A potent drink that boosts morale and enhances collaboration among teammates.",
+      "sourceTopics": [
+        "Meeting my teammates",
+        "Meeting my Team mate"
+      ],
+      "attackPoints": 5,
+      "position": {
+        "x": 614,
+        "y": 351
+      },
+      "collectedBy": "Markus"
+    },
+    {
+      "id": "powerup-courageous-charm-1",
+      "name": "Courageous Charm",
+      "description": "A magical charm that grants the wearer confidence to tackle challenges head-on.",
+      "sourceTopics": [
+        "Meeting my teammates"
+      ],
+      "attackPoints": 4,
+      "position": {
+        "x": 283,
+        "y": 372
+      },
+      "collectedBy": "Markus"
+    }
+  ],
+  "resolutions": [
+    {
+      "enemyId": "enemy-the-sleep-thief-0",
+      "enemyName": "The Sleep Thief",
+      "treatment": "Reviers pick up a fresh coffee from the shop every morning. every one one for the theam",
+      "owner": "Markus",
+      "reviewBy": "next retro",
+      "attackSpent": 1,
+      "party": [
+        "Winnie",
+        "Markus"
+      ],
+      "resolvedAt": 1790102746466
+    },
+    {
+      "enemyId": "enemy-the-social-saboteur-1",
+      "enemyName": "The Social Saboteur",
+      "treatment": "Just beat him to death with a club",
+      "owner": "Markus",
+      "reviewBy": "next retro",
+      "attackSpent": 1,
+      "party": [
+        "Markus"
+      ],
+      "resolvedAt": 1790102787724
+    },
+    {
+      "enemyId": "enemy-the-absence-apparition-2",
+      "enemyName": "The Absence Apparition",
+      "treatment": "Fucking kill him with fire",
+      "owner": "Mapi",
+      "reviewBy": "next retro",
+      "attackSpent": 0,
+      "party": [
+        "Markus"
+      ],
+      "resolvedAt": 1790102836354
+    }
+  ],
+  "attackPoints": {
+    "collected": 9,
+    "spent": 2,
+    "remaining": 7
+  },
+  "summary": {
+    "headline": "Dungeon cleared. Every blocker in this level has a treatment.",
+    "stats": [
+      {
+        "title": "Party",
+        "value": "2"
+      },
+      {
+        "title": "Topics raised",
+        "value": "6 (2 good)"
+      },
+      {
+        "title": "Enemies",
+        "value": "3 resolved / 3 total"
+      },
+      {
+        "title": "Attack points",
+        "value": "2 spent of 9 collected"
+      }
+    ],
+    "resolved": [
+      {
+        "enemyId": "enemy-the-sleep-thief-0",
+        "enemyName": "The Sleep Thief",
+        "treatment": "Reviers pick up a fresh coffee from the shop every morning. every one one for the theam",
+        "owner": "Markus",
+        "reviewBy": "next retro",
+        "attackSpent": 1,
+        "party": [
+          "Winnie",
+          "Markus"
+        ],
+        "resolvedAt": 1790102746466
+      },
+      {
+        "enemyId": "enemy-the-social-saboteur-1",
+        "enemyName": "The Social Saboteur",
+        "treatment": "Just beat him to death with a club",
+        "owner": "Markus",
+        "reviewBy": "next retro",
+        "attackSpent": 1,
+        "party": [
+          "Markus"
+        ],
+        "resolvedAt": 1790102787724
+      },
+      {
+        "enemyId": "enemy-the-absence-apparition-2",
+        "enemyName": "The Absence Apparition",
+        "treatment": "Fucking kill him with fire",
+        "owner": "Mapi",
+        "reviewBy": "next retro",
+        "attackSpent": 0,
+        "party": [
+          "Markus"
+        ],
+        "resolvedAt": 1790102836354
+      }
+    ],
+    "unresolved": [],
+    "actionItems": [
+      "Reviers pick up a fresh coffee from the shop every morning. every one one for the theam — Markus, review next retro (beat The Sleep Thief)",
+      "Just beat him to death with a club — Markus, review next retro (beat The Social Saboteur)",
+      "Fucking kill him with fire — Mapi, review next retro (beat The Absence Apparition)"
+    ]
+  }
+}
