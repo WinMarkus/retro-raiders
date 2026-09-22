@@ -23,7 +23,12 @@ import {
 } from './game.js';
 import { generateCharacters, generateLevel } from './generate.js';
 import { commitFile, readGithubConfig } from './github.js';
-import { isAllowedOpenRouterModel, readOpenRouterConfig, selectOpenRouterModel } from './openrouter.js';
+import {
+  isAllowedOpenRouterModel,
+  readOpenRouterConfig,
+  readOpenRouterImageConfig,
+  selectOpenRouterModel,
+} from './openrouter.js';
 import { RATE_LIMITS, rateLimit } from './ratelimit.js';
 import { buildCommitMessage, buildSavePath, buildSnapshot } from './snapshot.js';
 import { isFacilitator, topicsOf, type PlayerRecord, type Room, type RoomStore } from './state.js';
@@ -218,6 +223,8 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       const { characters, note } = await generateCharacters(
         [{ playerName: found.player.name, checkIn: found.player.checkIn }],
         config,
+        undefined,
+        readOpenRouterImageConfig(),
       );
       found.player.character = characters[0] ?? null;
       found.player.ready = true;

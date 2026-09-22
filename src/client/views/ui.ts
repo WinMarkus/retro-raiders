@@ -77,7 +77,14 @@ export function avatarBadge(character: Character | null, name: string, size: 'sm
       style: `--avatar-hue:${hue}`,
       title: character ? `${character.characterName} — ${character.className}` : name,
     },
-    h('span', { class: 'avatar__emoji', text: character?.emoji ?? '🎲' }),
+    character?.avatarImage
+      ? h('img', {
+          class: 'avatar__image',
+          src: character.avatarImage.dataUrl,
+          alt: character.characterName,
+          loading: 'lazy',
+        })
+      : h('span', { class: 'avatar__emoji', text: character?.emoji ?? '🎲' }),
   );
 }
 

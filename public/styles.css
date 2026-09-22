@@ -599,12 +599,21 @@ a.link {
   border-radius: 50%;
   background: hsl(var(--avatar-hue, 210) 45% 28%);
   border: 1px solid hsl(var(--avatar-hue, 210) 60% 55%);
+  overflow: hidden;
+  flex: 0 0 auto;
 }
 
 .avatar--lg {
   width: 3.2rem;
   height: 3.2rem;
   font-size: 1.5rem;
+}
+
+.avatar__image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 /* ------------------------------------------------------------ hero cards */

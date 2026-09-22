@@ -75,10 +75,10 @@ The server binds to `process.env.PORT` (default `3000`) and `HOST` (default `0.0
 |----------|----------|---------|
 | `PORT` | no | HTTP port. Render sets this for you. |
 | `OPENROUTER_API_KEY` | no | Enables AI generation. Without it the local generator is used. |
-| `OPENROUTER_TEXT_MODEL` | no | Default text model, used when a room has not chosen another option. Defaults to `openai/gpt-4o-mini`. |
+| `OPENROUTER_TEXT_MODEL` | no | Default text model, used when a room has not chosen another option. Defaults to `qwen/qwen3.8-27b:free`. |
 | `OPENROUTER_MODEL` | no | Legacy alias for `OPENROUTER_TEXT_MODEL`; kept so old deployments still work. |
 | `OPENROUTER_MODEL_OPTIONS` | no | Comma-separated allowlist for the facilitator dropdown. Use `model-id\|Label` for nicer labels. |
-| `OPENROUTER_IMAGE_MODEL` | no | Reserved for a later real avatar/image pipeline. Current portraits are local CSS/emoji cards. |
+| `OPENROUTER_IMAGE_MODEL` | no | Optional paid avatar image model. Leave empty for local CSS/emoji portraits. Cheap starting point: `openai/gpt-image-2`. |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | no | Attribution headers OpenRouter shows on its dashboard. |
 | `GITHUB_TOKEN` | only for saving | Fine-grained token with **Contents: Read and write**. |
 | `GITHUB_OWNER` | only for saving | User or organisation that owns the target repo. |
@@ -100,12 +100,19 @@ level. AI calls are rate limited to six per room per ten minutes.
 
 The facilitator can choose the room's text model from the server-side allowlist exposed by
 `OPENROUTER_MODEL_OPTIONS`. That selected model is used for both character generation and
-level generation in that room. The browser cannot send arbitrary model names: anything not
+dungeon generation in that room. The browser cannot send arbitrary model names: anything not
 in the allowlist is rejected server-side.
 
-Text and images are deliberately separate. Today OpenRouter is only used for structured text
-generation. Character portraits are CSS/emoji cards generated locally from the character
-data, plus an `avatarPrompt` saved in the snapshot for a later real image pipeline.
+Text and images are deliberately separate. The selected text model creates structured JSON
+for characters and the dungeon. If `OPENROUTER_IMAGE_MODEL` is set, the server also calls
+`POST https://openrouter.ai/api/v1/images` after each character is forged and stores the
+returned avatar as a data URL on the character. If image generation fails or is not configured,
+the CSS/emoji portrait remains in place and the game continues.
+
+Recommended defaults: use `qwen/qwen3.8-27b:free` for the structured retro text and try
+`openai/gpt-image-2` for avatar images. OpenRouter's own comparison measured it in the
+sub-cent to low-cent range per small image; check your dashboard usage because provider
+prices can change.
 
 **The model's answer is treated exactly like player input.** Nothing it returns is used as
 given:
@@ -189,7 +196,7 @@ health check on `/health`.
 1. Push this repository to GitHub.
 2. Render dashboard → **New** → **Blueprint** → pick the repository → **Apply**.
 3. In the service's **Environment** tab add `OPENROUTER_API_KEY` (optional) and optionally
-   tune `OPENROUTER_TEXT_MODEL` / `OPENROUTER_MODEL_OPTIONS`. Also add
+   tune `OPENROUTER_TEXT_MODEL` / `OPENROUTER_MODEL_OPTIONS` / `OPENROUTER_IMAGE_MODEL`. Also add
    `GITHUB_TOKEN`, `GITHUB_OWNER`, `GITHUB_REPO` (optional). They are `sync: false` in the
    blueprint so they are never stored in git. Render injects `PORT` automatically.
 

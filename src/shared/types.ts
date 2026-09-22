@@ -32,6 +32,12 @@ export interface Character {
   attack: number;
   support: number;
   avatarPrompt: string;
+  avatarImage: {
+    dataUrl: string;
+    mediaType: string;
+    model: string;
+    cost: number | null;
+  } | null;
   /** Emoji portrait, chosen deterministically so no image API is needed. */
   emoji: string;
   /** Hue used for the CSS avatar card, 0-359. */
@@ -165,7 +171,7 @@ export interface GameState {
     textModel: string;
     textModelLabel: string;
     textModelOptions: AiModelOption[];
-    avatarImages: 'local-css';
+    avatarImages: 'local-css' | 'openrouter-image';
     imageModel: string | null;
   };
   githubConfigured: boolean;

@@ -10,7 +10,13 @@ import type {
   PowerUp,
   Topic,
 } from '../shared/types.js';
-import { complete, extractJson, type OpenRouterConfig } from './openrouter.js';
+import {
+  complete,
+  extractJson,
+  generateImage,
+  type OpenRouterConfig,
+  type OpenRouterImageConfig,
+} from './openrouter.js';
 import { clampInt, clampPoint, sanitizeSingleLine, sanitizeText } from './validation.js';
 
 /* ------------------------------------------------------------ helpers -- */
@@ -109,6 +115,7 @@ export function fallbackCharacter(playerName: string, checkIn: CheckIn): Charact
     attack,
     support,
     avatarPrompt: `tiny fantasy ${archetype.id} engineer, warm pixel-art style`,
+    avatarImage: null,
     emoji: archetype.emoji,
     hue: hash(`hue:${seed}`) % 360,
     source: 'fallback',
@@ -134,10 +141,11 @@ export async function generateCharacters(
   requests: CharacterRequest[],
   config: OpenRouterConfig | null,
   fetchImpl?: typeof fetch,
+  imageConfig?: OpenRouterImageConfig | null,
 ): Promise<{ characters: Character[]; source: 'ai' | 'fallback'; note: string | null }> {
   const fallback = requests.map((request) => fallbackCharacter(request.playerName, request.checkIn));
   if (!config || requests.length === 0) {
-    return { characters: fallback, source: 'fallback', note: null };
+    return { characters: await addAvatarImages(fallback, imageConfig, fetchImpl), source: 'fallback', note: null };
   }
 
   const user = JSON.stringify({
@@ -153,13 +161,21 @@ export async function generateCharacters(
 
   const result = await complete({ config, system: CHARACTER_SYSTEM, user, maxTokens: 1800, fetchImpl });
   if (!result.ok) {
-    return { characters: fallback, source: 'fallback', note: result.error };
+    return {
+      characters: await addAvatarImages(fallback, imageConfig, fetchImpl),
+      source: 'fallback',
+      note: result.error,
+    };
   }
 
   const parsed = extractJson(result.content) as { characters?: unknown } | null;
   const rows = Array.isArray(parsed?.characters) ? parsed!.characters : [];
   if (rows.length === 0) {
-    return { characters: fallback, source: 'fallback', note: 'The AI answer could not be parsed as JSON.' };
+    return {
+      characters: await addAvatarImages(fallback, imageConfig, fetchImpl),
+      source: 'fallback',
+      note: 'The AI answer could not be parsed as JSON.',
+    };
   }
 
   const byName = new Map<string, Record<string, unknown>>();
@@ -176,7 +192,42 @@ export async function generateCharacters(
     return sanitizeCharacter(raw, request, fallback[index]!);
   });
 
-  return { characters, source: 'ai', note: null };
+  return { characters: await addAvatarImages(characters, imageConfig, fetchImpl), source: 'ai', note: null };
+}
+
+async function addAvatarImages(
+  characters: Character[],
+  imageConfig: OpenRouterImageConfig | null | undefined,
+  fetchImpl?: typeof fetch,
+): Promise<Character[]> {
+  if (!imageConfig) return characters;
+  const withImages: Character[] = [];
+  for (const character of characters) {
+    const image = await generateImage({
+      config: imageConfig,
+      prompt: [
+        character.avatarPrompt,
+        `Character name: ${character.characterName}.`,
+        `Class: ${character.className}.`,
+        'Single square fantasy RPG avatar portrait, warm pixel-art illustration, centered bust, expressive face, no text, no letters, no UI.',
+      ].join(' '),
+      fetchImpl,
+    });
+    withImages.push(
+      image.ok
+        ? {
+            ...character,
+            avatarImage: {
+              dataUrl: image.dataUrl,
+              mediaType: image.mediaType,
+              model: image.model,
+              cost: image.cost,
+            },
+          }
+        : character,
+    );
+  }
+  return withImages;
 }
 
 /** The model's answer is treated exactly like player input: clamped and cleaned. */
@@ -197,6 +248,7 @@ export function sanitizeCharacter(
     attack: clampInt(raw.attack, 1, 5, fallback.attack),
     support: clampInt(raw.support, 1, 5, fallback.support),
     avatarPrompt: sanitizeSingleLine(raw.avatarPrompt, 160) || fallback.avatarPrompt,
+    avatarImage: null,
     emoji: pick(CLASS_BY_MOOD, `class:${seed}`).emoji,
     hue: hash(`hue:${seed}`) % 360,
     source: 'ai',

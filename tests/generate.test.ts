@@ -26,8 +26,14 @@ function topic(partial: Partial<Topic> & { title: string }): Topic {
 const config: OpenRouterConfig = {
   apiKey: 'sk-test-key',
   model: 'test/model',
+  modelLabel: 'Test model',
   referer: 'https://example.test',
   title: 'test',
+};
+
+const imageConfig = {
+  apiKey: 'sk-test-key',
+  model: 'openai/gpt-image-2',
 };
 
 function aiResponse(payload: unknown): typeof fetch {
@@ -39,6 +45,29 @@ function aiResponse(payload: unknown): typeof fetch {
       text: async () => '',
     }) as unknown as Response,
   ) as unknown as typeof fetch;
+}
+
+function aiAndImageResponse(payload: unknown): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('/images')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{ b64_json: 'iVBORw0KGgo=', media_type: 'image/png' }],
+          usage: { cost: 0.006 },
+        }),
+        text: async () => '',
+      } as unknown as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify(payload) } }] }),
+      text: async () => '',
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
 }
 
 describe('topic clustering', () => {
@@ -342,5 +371,32 @@ describe('characters', () => {
     expect(result.characters[0]!.source).toBe('ai');
     expect(result.characters[1]!.source).toBe('fallback');
     expect(result.characters[1]!.playerName).toBe('Lena');
+  });
+
+  it('adds a generated avatar image when an image model is configured', async () => {
+    const result = await generateCharacters(
+      [{ playerName: 'Markus', checkIn }],
+      config,
+      aiAndImageResponse({
+        characters: [
+          {
+            playerName: 'Markus',
+            characterName: 'Carl Ironhand',
+            className: 'Manual Crafting Barbarian',
+            description: 'Fixes things with stubbornness.',
+            skill: 'Overpowered Manual Crafting',
+            weakness: 'Badly named Jira tickets.',
+            attack: 4,
+            support: 3,
+            avatarPrompt: 'tiny barbarian engineer with a hammer',
+          },
+        ],
+      }),
+      imageConfig,
+    );
+
+    expect(result.characters[0]!.avatarImage?.dataUrl).toBe('data:image/png;base64,iVBORw0KGgo=');
+    expect(result.characters[0]!.avatarImage?.model).toBe('openai/gpt-image-2');
+    expect(result.characters[0]!.avatarImage?.cost).toBe(0.006);
   });
 });

@@ -75,6 +75,11 @@ export function renderForge(state: GameState): HTMLElement {
     await act('character:forge');
   };
 
+  const avatarHint =
+    state.generation.avatarImages === 'openrouter-image'
+      ? `Avatar images use ${state.generation.imageModel}.`
+      : 'Portraits use local CSS/emoji cards until OPENROUTER_IMAGE_MODEL is set.';
+
   const formPanel = panel(
     'How were the last two weeks?',
     scaleInput('Energy', draft.energy, (value) => {
@@ -104,8 +109,8 @@ export function renderForge(state: GameState): HTMLElement {
           'AI text model',
           modelSelect,
           state.you.isFacilitator
-            ? 'Used for character and dungeon generation in this room. Portraits are local CSS/emoji cards, so no image model is called yet.'
-            : `Facilitator controls this. Current: ${state.generation.textModelLabel}. Portraits are local CSS/emoji cards.`,
+            ? `Used for character and dungeon generation in this room. ${avatarHint}`
+            : `Facilitator controls this. Current: ${state.generation.textModelLabel}. ${avatarHint}`,
         )
       : h('p', {
           class: 'notice',

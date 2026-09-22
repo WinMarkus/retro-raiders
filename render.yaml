@@ -18,10 +18,10 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_TEXT_MODEL
-        value: openai/gpt-4o-mini
+        value: qwen/qwen3.8-27b:free
       - key: OPENROUTER_MODEL_OPTIONS
-        value: "openai/gpt-4o-mini|GPT-4o mini - cheap solid default,openai/gpt-4.1-mini|GPT-4.1 mini - better wording,openai/gpt-4.1|GPT-4.1 - stronger, pricier,anthropic/claude-sonnet-4|Claude Sonnet 4 - creative,google/gemini-2.5-flash|Gemini 2.5 Flash - fast,z-ai/glm-5.3-flash|GLM 5.3 Flash - experimental cheap"
-      # Reserved for a later real image integration. Current avatars are local CSS/emoji cards.
+        value: "qwen/qwen3.8-27b:free|Qwen 3.8 27B Free - structured,openrouter/free|OpenRouter Free Router - experimental,qwen/qwen3.6-plus:free|Qwen 3.6 Plus Free - creative,nvidia/nemotron-3.5-lightning:free|Nemotron 3.5 Lightning Free - punchy,inclusionai/ling-3.0-flash-fin:free|Ling 3.0 Flash Fin Free - colorful,google/gemma-4-31b-it:free|Gemma 4 31B Free - playful"
+      # Optional paid avatar generation. Leave unset for local CSS/emoji avatars.
       - key: OPENROUTER_IMAGE_MODEL
         sync: false
       # Optional. Without these Markus gets "Download JSON" instead of saving.

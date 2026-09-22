@@ -1,7 +1,12 @@
 import type { GameState, PublicPlayer } from '../shared/types.js';
 import { attackAvailable, buildSummary } from './game.js';
 import { isGithubConfigured } from './github.js';
-import { isOpenRouterConfigured, readOpenRouterModelOptions, selectOpenRouterModel } from './openrouter.js';
+import {
+  isOpenRouterConfigured,
+  readOpenRouterImageConfig,
+  readOpenRouterModelOptions,
+  selectOpenRouterModel,
+} from './openrouter.js';
 import { isFacilitator, topicsOf, type Room } from './state.js';
 
 /** The one name allowed to write the retro into the repository. */
@@ -14,6 +19,7 @@ export function canSave(playerName: string): boolean {
 export function buildState(room: Room, playerId: string): GameState {
   const me = room.players.get(playerId);
   const selectedModel = selectOpenRouterModel(room.aiTextModel);
+  const imageConfig = readOpenRouterImageConfig();
   const players: PublicPlayer[] = [...room.players.values()]
     .sort((a, b) => a.joinedAt - b.joinedAt)
     .map((player) => ({
@@ -61,8 +67,8 @@ export function buildState(room: Room, playerId: string): GameState {
       textModel: selectedModel.id,
       textModelLabel: selectedModel.label,
       textModelOptions: readOpenRouterModelOptions(),
-      avatarImages: 'local-css',
-      imageModel: null,
+      avatarImages: imageConfig ? 'openrouter-image' : 'local-css',
+      imageModel: imageConfig?.model ?? null,
     },
     githubConfigured: isGithubConfigured(),
     canSave: canSave(me?.name ?? ''),
