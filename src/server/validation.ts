@@ -141,6 +141,11 @@ export function validateTreatment(
   if (typeof input.attackPoints === 'number' && input.attackPoints > maxSpend) {
     errors.push(`The party only has ${maxSpend} attack point${maxSpend === 1 ? '' : 's'} to spend.`);
   }
+  if (maxSpend < 1) {
+    errors.push('Collect a power-up first. Every fight must spend at least one attack point.');
+  } else if (value.attackPoints < 1) {
+    errors.push('Spend at least one attack point on this fight.');
+  }
 
   return { ok: errors.length === 0, errors, value };
 }

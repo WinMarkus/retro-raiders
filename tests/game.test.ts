@@ -131,6 +131,23 @@ describe('attack points', () => {
     expect(validation.ok).toBe(false);
     expect(validation.value.attackPoints).toBeLessThanOrEqual(4);
   });
+
+  it('requires every fight to spend at least one collected point', () => {
+    const withoutPoints = validateTreatment(
+      { treatment: 'Reviewers take PRs before new work', attackPoints: 0 },
+      attackAvailable(room),
+    );
+    expect(withoutPoints.ok).toBe(false);
+    expect(withoutPoints.errors.join(' ')).toMatch(/power-up/i);
+
+    room.attackCollected = 2;
+    const zeroSpend = validateTreatment(
+      { treatment: 'Reviewers take PRs before new work', attackPoints: 0 },
+      attackAvailable(room),
+    );
+    expect(zeroSpend.ok).toBe(false);
+    expect(zeroSpend.errors.join(' ')).toMatch(/at least one/i);
+  });
 });
 
 describe('resolving an enemy', () => {
@@ -158,6 +175,32 @@ describe('resolving an enemy', () => {
     expect(attackAvailable(room)).toBe(2);
     expect(resolution.party).toEqual(['Ada', 'Grace', 'Linus']);
     expect(players[0]!.lockedEnemyId).toBeNull();
+  });
+
+  it('drains the shared attack pool across multiple fights', () => {
+    room.attackCollected = 5;
+    const first = room.level!.enemies[0]!;
+    const second = room.level!.enemies[1]!;
+    for (const player of players.slice(0, 3)) lockOn(room, player, first.id);
+    resolveEnemy(room, first, {
+      treatment: 'Reviewers pick up PRs in the morning slot.',
+      owner: '',
+      reviewBy: 'next retro',
+      attackPoints: 2,
+    });
+
+    expect(attackAvailable(room)).toBe(3);
+
+    for (const player of players.slice(0, 3)) lockOn(room, player, second.id);
+    resolveEnemy(room, second, {
+      treatment: 'Friday deploys get a release checklist.',
+      owner: '',
+      reviewBy: 'next retro',
+      attackPoints: 3,
+    });
+
+    expect(room.attackSpent).toBe(5);
+    expect(attackAvailable(room)).toBe(0);
   });
 
   it('puts an abandoned enemy back on the map', () => {

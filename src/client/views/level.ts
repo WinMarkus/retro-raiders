@@ -429,14 +429,17 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
         h('div', { class: 'scale__row' }, spendInput, spendOutput),
         h('span', {
           class: 'field__hint',
-          text: 'Points are priority, not damage: spend more on what the team really wants fixed.',
+          text:
+            maxSpend === 0
+              ? 'Collect a power-up first. Every fight must spend at least one attack point.'
+              : 'Points are priority, not damage: spend more on what the team really wants fixed.',
         }),
       ),
       error,
       h(
         'div',
         { class: 'modal__actions' },
-        button('Strike — freeze this enemy', () => void submit()),
+        button('Strike — freeze this enemy', () => void submit(), 'primary', maxSpend === 0),
         button('Back off', () => void act('encounter:abandon'), 'ghost'),
       ),
     ),
