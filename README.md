@@ -33,7 +33,7 @@ the local generator takes over wherever the AI would be.
 | Screen | What happens |
 |--------|--------------|
 | **Join / Create** | Name, and either a room code or a new dungeon. Names are unique per room; a disconnect can be rejoined. |
-| **Character Forge** | Energy, pressure and satisfaction on 1–5, a few words about the sprint, optional keywords. The server sends that to OpenRouter and gets back a character: name, class, description, one special skill, one funny weakness, attack and support derived from your numbers. Portraits are emoji plus a CSS card — no image API needed. |
+| **Character Forge** | Energy, pressure and satisfaction on 1–5, a few words about the sprint, optional keywords. The server sends that to OpenRouter and gets back a character: name, class, description, one special skill, one funny weakness, attack and support derived from your numbers. Portraits are emoji plus a CSS card by default; if `OPENROUTER_IMAGE_MODEL` is set, players can opt into slower generated image avatars with the toggle next to the forge button. |
 | **Topic Forge** | Up to six topics each, typed **good** / **bad** / **sad**, with an optional description and intensity. Everyone sees the count, only you see your own. |
 | **Generation** | The facilitator presses *Generate the dungeon*. The topics go to OpenRouter, which clusters them and returns a level. |
 | **The Dungeon** | A top-down map. Move with WASD, arrows, or by clicking. Bad and sad topics are enemies, good ones are power-ups lying on the floor. Walk over a power-up to collect its attack points for the party. Click an enemy to lock on. |
@@ -104,10 +104,11 @@ dungeon generation in that room. The browser cannot send arbitrary model names: 
 in the allowlist is rejected server-side.
 
 Text and images are deliberately separate. The selected text model creates structured JSON
-for characters and the dungeon. If `OPENROUTER_IMAGE_MODEL` is set, the server also calls
-`POST https://openrouter.ai/api/v1/images` after each character is forged and stores the
-returned avatar as a data URL on the character. If image generation fails or is not configured,
-the CSS/emoji portrait remains in place and the game continues.
+for characters and the dungeon. If `OPENROUTER_IMAGE_MODEL` is set, players get a **Create
+image** toggle next to the forge button. Only when that toggle is on does the server call
+`POST https://openrouter.ai/api/v1/images` and store the returned avatar as a data URL on
+the character. If image generation fails, is skipped, or is not configured, the CSS/emoji
+portrait remains in place and the game continues.
 
 Recommended defaults: use `qwen/qwen3.8-27b:free` for the structured retro text and try
 `openai/gpt-image-2` for avatar images. OpenRouter's own comparison measured it in the

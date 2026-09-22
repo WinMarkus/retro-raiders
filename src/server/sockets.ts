@@ -205,7 +205,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('character:forge', async (_payload: unknown, ack: Ack<ActionResult>) => {
+    socket.on('character:forge', async (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (found.room.phase !== 'forge') return fail(ack, 'The forge is closed.');
@@ -217,14 +217,21 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       }
 
       const config = readOpenRouterConfig(process.env, found.room.aiTextModel).config ?? null;
-      found.room.generation = { busy: true, message: `Forging ${found.player.name}'s hero…` };
+      const withAvatarImage = (payload as { withAvatarImage?: unknown } | null)?.withAvatarImage === true;
+      const imageConfig = withAvatarImage ? readOpenRouterImageConfig() : null;
+      found.room.generation = {
+        busy: true,
+        message: imageConfig
+          ? `Forging ${found.player.name}'s hero and painting the portrait…`
+          : `Forging ${found.player.name}'s hero…`,
+      };
       pushState(io, found.room);
 
       const { characters, note } = await generateCharacters(
         [{ playerName: found.player.name, checkIn: found.player.checkIn }],
         config,
         undefined,
-        readOpenRouterImageConfig(),
+        imageConfig,
       );
       found.player.character = characters[0] ?? null;
       found.player.ready = true;

@@ -345,6 +345,70 @@ a.link {
   color: var(--gold);
 }
 
+/* ---------------------------------------------------------------- switch */
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--parchment-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch--disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.switch__input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch__track {
+  position: relative;
+  inline-size: 2.45rem;
+  block-size: 1.35rem;
+  border: 1px solid var(--stone-500);
+  border-radius: 999px;
+  background: rgba(12, 10, 16, 0.82);
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.switch__thumb {
+  position: absolute;
+  inset-block-start: 0.17rem;
+  inset-inline-start: 0.17rem;
+  inline-size: 0.9rem;
+  block-size: 0.9rem;
+  border-radius: 50%;
+  background: var(--parchment-dim);
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+
+.switch__input:checked + .switch__track {
+  border-color: var(--gold);
+  background: rgba(242, 190, 83, 0.24);
+}
+
+.switch__input:checked + .switch__track .switch__thumb {
+  transform: translateX(1.1rem);
+  background: var(--gold);
+}
+
+.switch__input:focus-visible + .switch__track {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.switch__label {
+  font-size: 0.86rem;
+}
+
 /* ---------------------------------------------------------------- fields */
 
 .field {

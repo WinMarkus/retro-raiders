@@ -13,6 +13,7 @@ interface Draft {
 
 const draft: Draft = { energy: 3, pressure: 3, satisfaction: 3, mood: '', keywords: '' };
 let seeded = false;
+let withAvatarImage = false;
 
 export function renderForge(state: GameState): HTMLElement {
   if (!seeded && state.you.checkIn) {
@@ -72,13 +73,34 @@ export function renderForge(state: GameState): HTMLElement {
       .slice(0, 5);
     const saved = await act('checkin:set', { ...draft, keywords });
     if (!saved.ok) return;
-    await act('character:forge');
+    await act('character:forge', { withAvatarImage: withAvatarImage && Boolean(state.generation.imageModel) });
   };
 
   const avatarHint =
     state.generation.avatarImages === 'openrouter-image'
-      ? `Avatar images use ${state.generation.imageModel}.`
+      ? `Image model available: ${state.generation.imageModel}. Toggle it on only when you want the slower portrait generation.`
       : 'Portraits use local CSS/emoji cards until OPENROUTER_IMAGE_MODEL is set.';
+
+  const avatarToggle = h(
+    'label',
+    {
+      class: `switch${state.generation.imageModel ? '' : ' switch--disabled'}`,
+      title: state.generation.imageModel
+        ? 'Generate a real avatar image for this character. Slower and may cost a tiny amount.'
+        : 'Set OPENROUTER_IMAGE_MODEL on the server to enable image avatars.',
+    },
+    h('input', {
+      class: 'switch__input',
+      type: 'checkbox',
+      checked: withAvatarImage && Boolean(state.generation.imageModel),
+      disabled: busy || !state.generation.imageModel,
+      onChange: (event: Event) => {
+        withAvatarImage = (event.target as HTMLInputElement).checked;
+      },
+    }),
+    h('span', { class: 'switch__track' }, h('span', { class: 'switch__thumb' })),
+    h('span', { class: 'switch__label', text: 'Create image' }),
+  );
 
   const formPanel = panel(
     'How were the last two weeks?',
@@ -102,6 +124,7 @@ export function renderForge(state: GameState): HTMLElement {
         'primary',
         busy,
       ),
+      avatarToggle,
       busy ? h('span', { class: 'spinner', 'aria-label': 'forging' }) : null,
     ),
     state.generation.aiConfigured
