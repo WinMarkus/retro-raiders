@@ -22,14 +22,18 @@ export interface OpenRouterConfigResult {
   message?: string;
 }
 
-export const DEFAULT_TEXT_MODEL = 'qwen/qwen3.8-27b:free';
+export const DEFAULT_TEXT_MODEL = 'openai/gpt-4o-mini';
 export const DEFAULT_MODEL = DEFAULT_TEXT_MODEL;
 export const DEFAULT_IMAGE_MODEL = 'openai/gpt-image-2';
 
 export const BUILTIN_TEXT_MODEL_OPTIONS: OpenRouterModelOption[] = [
+  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini - paid cheap solid default' },
+  { id: 'openai/gpt-4.1-mini', label: 'GPT-4.1 mini - paid better wording' },
+  { id: 'openai/gpt-4.1', label: 'GPT-4.1 - paid stronger, pricier' },
+  { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 - paid creative' },
+  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash - paid fast' },
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash - paid experimental cheap' },
   { id: 'qwen/qwen3.8-27b:free', label: 'Qwen 3.8 27B Free - structured' },
-  { id: 'openrouter/free', label: 'OpenRouter Free Router - experimental' },
-  { id: 'qwen/qwen3.6-plus:free', label: 'Qwen 3.6 Plus Free - creative' },
   { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron 3.5 Lightning Free - punchy' },
   { id: 'inclusionai/ling-3.0-flash-fin:free', label: 'Ling 3.0 Flash Fin Free - colorful' },
   { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B Free - playful' },

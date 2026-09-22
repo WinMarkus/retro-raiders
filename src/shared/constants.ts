@@ -59,8 +59,6 @@ export const LIMITS = {
   minEnemies: 3,
   maxEnemies: 8,
   maxPowerUps: 8,
-  /** How many players must lock on before an encounter opens. */
-  encounterPartySize: 3,
   maxAttackPerEnemy: 12,
   scaleMin: 1,
   scaleMax: 5,

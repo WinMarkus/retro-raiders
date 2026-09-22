@@ -47,7 +47,7 @@ beforeEach(() => {
 });
 
 describe('locking on', () => {
-  it('needs three players before the fight opens', () => {
+  it('needs a majority of connected players before the fight opens', () => {
     const enemy = room.level!.enemies[0]!;
     expect(encounterThreshold(room)).toBe(3);
 
@@ -61,7 +61,16 @@ describe('locking on', () => {
     expect(room.encounter?.party).toEqual(['Ada', 'Grace', 'Linus']);
   });
 
-  it('lowers the threshold when fewer players are connected', () => {
+  it('recalculates the majority when fewer players are connected', () => {
+    players[3]!.connected = false;
+    expect(encounterThreshold(room)).toBe(2);
+
+    const enemy = room.level!.enemies[0]!;
+    expect(lockOn(room, players[0]!, enemy.id)).toEqual({ ok: true, opened: false });
+    expect(lockOn(room, players[1]!, enemy.id)).toEqual({ ok: true, opened: true });
+  });
+
+  it('opens solo fights when only one player is connected', () => {
     for (const player of players.slice(1)) player.connected = false;
     expect(encounterThreshold(room)).toBe(1);
     const enemy = room.level!.enemies[0]!;

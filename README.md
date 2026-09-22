@@ -37,7 +37,7 @@ the local generator takes over wherever the AI would be.
 | **Topic Forge** | Up to six topics each, typed **good** / **bad** / **sad**, with an optional description and intensity. Everyone sees the count, only you see your own. |
 | **Generation** | The facilitator presses *Generate the dungeon*. The topics go to OpenRouter, which clusters them and returns a level. |
 | **The Dungeon** | A top-down map. Move with WASD, arrows, or by clicking. Bad and sad topics are enemies, good ones are power-ups lying on the floor. Walk over a power-up to collect its attack points for the party. Click an enemy to lock on. |
-| **Encounter** | When three players lock onto the same enemy, movement pauses and a modal opens with the enemy, the original topics it came from, and who is locked on. The team writes how it wants to handle the issue, an optional owner, a review date, and how many attack points to spend. Submitting freezes the enemy. |
+| **Encounter** | When a majority of connected players locks onto the same enemy, movement pauses for everyone and a modal opens with the enemy, the original topics it came from, and who is locked on. Locked players, plus the facilitator, can write how the team wants to handle the issue, an optional owner, a review date, and how many attack points to spend. Submitting freezes the enemy. |
 | **Victory Report** | Characters, topics, enemies, power-ups, treatments, points spent, what is still standing, and the action items — a game screen you can still paste into a wiki. |
 
 ### Attack points instead of dot voting
@@ -47,9 +47,9 @@ spends those points on the enemies it cares about. Spending is not damage — an
 frozen by a treatment, not by arithmetic. The points say *how much this matters to us*,
 which is the part a dot vote was always trying to measure.
 
-The threshold for opening a fight is three players, or fewer if fewer are connected, so a
-room of two is not stuck. That threshold is deliberate: it stops one person from quietly
-deciding what the team will do about something.
+The threshold for opening a fight is a majority of connected players: 1/1, 2/2, 2/3,
+3/4, and so on. That threshold is deliberate: it stops one person from quietly deciding
+what the team will do about something, while still keeping small rooms playable.
 
 ---
 
@@ -75,7 +75,7 @@ The server binds to `process.env.PORT` (default `3000`) and `HOST` (default `0.0
 |----------|----------|---------|
 | `PORT` | no | HTTP port. Render sets this for you. |
 | `OPENROUTER_API_KEY` | no | Enables AI generation. Without it the local generator is used. |
-| `OPENROUTER_TEXT_MODEL` | no | Default text model, used when a room has not chosen another option. Defaults to `qwen/qwen3.8-27b:free`. |
+| `OPENROUTER_TEXT_MODEL` | no | Default text model, used when a room has not chosen another option. Defaults to `openai/gpt-4o-mini`. |
 | `OPENROUTER_MODEL` | no | Legacy alias for `OPENROUTER_TEXT_MODEL`; kept so old deployments still work. |
 | `OPENROUTER_MODEL_OPTIONS` | no | Comma-separated allowlist for the facilitator dropdown. Use `model-id\|Label` for nicer labels. |
 | `OPENROUTER_IMAGE_MODEL` | no | Optional paid avatar image model. Leave empty for local CSS/emoji portraits. Cheap starting point: `openai/gpt-image-2`. |
@@ -110,7 +110,8 @@ image** toggle next to the forge button. Only when that toggle is on does the se
 the character. If image generation fails, is skipped, or is not configured, the CSS/emoji
 portrait remains in place and the game continues.
 
-Recommended defaults: use `qwen/qwen3.8-27b:free` for the structured retro text and try
+Recommended defaults: use `openai/gpt-4o-mini` when you want the safest cheap paid text
+model, or try `qwen/qwen3.8-27b:free` first when cost matters more than consistency. Try
 `openai/gpt-image-2` for avatar images. OpenRouter's own comparison measured it in the
 sub-cent to low-cent range per small image; check your dashboard usage because provider
 prices can change.

@@ -1,4 +1,4 @@
-import { LIMITS, MAP } from '../shared/constants.js';
+import { MAP } from '../shared/constants.js';
 import type { Enemy, PowerUp, Resolution, Summary, Topic } from '../shared/types.js';
 import { connectedPlayers, type PlayerRecord, type Room } from './state.js';
 import type { TreatmentInput } from './validation.js';
@@ -38,7 +38,8 @@ export function collectNearbyPowerUps(room: Room, player: PlayerRecord): PowerUp
 
 /** How many players must lock on before the fight starts. */
 export function encounterThreshold(room: Room): number {
-  return Math.max(1, Math.min(LIMITS.encounterPartySize, connectedPlayers(room).length));
+  const connected = connectedPlayers(room).length;
+  return Math.max(1, Math.floor(connected / 2) + 1);
 }
 
 export function clearLock(room: Room, player: PlayerRecord): void {

@@ -51,6 +51,44 @@ function scatter(index: number, total: number, seed: string, band: 'inner' | 'ou
   });
 }
 
+function pointDistance(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function openPosition(initial: Point, seed: string, placed: Point[]): Point {
+  const minimum = MAP.interactRadius * 2.1;
+  if (placed.every((point) => pointDistance(point, initial) >= minimum)) return initial;
+
+  const golden = 2.399963;
+  const seedAngle = (hash(seed) % 1000) / 1000;
+  for (let attempt = 0; attempt < 36; attempt += 1) {
+    const radius = minimum * (1 + Math.floor(attempt / 8) * 0.45);
+    const angle = seedAngle + attempt * golden;
+    const candidate = clampPoint({
+      x: initial.x + Math.cos(angle) * radius,
+      y: initial.y + Math.sin(angle) * radius,
+    });
+    if (placed.every((point) => pointDistance(point, candidate) >= minimum)) return candidate;
+  }
+
+  return initial;
+}
+
+function spaceLevelObjects(enemies: Enemy[], powerUps: PowerUp[]): { enemies: Enemy[]; powerUps: PowerUp[] } {
+  const placed: Point[] = [];
+  const spacedEnemies = enemies.map((enemy) => {
+    const position = openPosition(enemy.position, enemy.id, placed);
+    placed.push(position);
+    return { ...enemy, position };
+  });
+  const spacedPowerUps = powerUps.map((powerUp) => {
+    const position = openPosition(powerUp.position, powerUp.id, placed);
+    placed.push(position);
+    return { ...powerUp, position };
+  });
+  return { enemies: spacedEnemies, powerUps: spacedPowerUps };
+}
+
 /* --------------------------------------------------------- characters -- */
 
 const CLASS_BY_MOOD: Array<{ id: string; className: string; emoji: string; skill: string }> = [
@@ -402,6 +440,7 @@ export function fallbackLevel(topics: Topic[], note: string | null = null): Leve
       collectedBy: null,
     };
   });
+  const spaced = spaceLevelObjects(enemies, powerUps);
 
   return {
     title: 'The Blocker Dungeon',
@@ -409,8 +448,8 @@ export function fallbackLevel(topics: Topic[], note: string | null = null): Leve
       enemies.length > 0
         ? 'The party descends. Everything the team ran into last sprint is down here, and it has teeth now.'
         : 'Suspiciously quiet down here. Either the sprint went well or nobody wrote anything down.',
-    enemies,
-    powerUps,
+    enemies: spaced.enemies,
+    powerUps: spaced.powerUps,
     source: 'fallback',
     generatedAt: Date.now(),
     note,
@@ -528,11 +567,13 @@ export function sanitizeLevel(raw: unknown, topics: Topic[]): Level | null {
     });
   }
 
+  const spaced = spaceLevelObjects(enemies, powerUps);
+
   return {
     title: sanitizeSingleLine(input.title, 80) || 'The Blocker Dungeon',
     intro: sanitizeText(input.intro, 300) || 'The party descends.',
-    enemies,
-    powerUps,
+    enemies: spaced.enemies,
+    powerUps: spaced.powerUps,
     source: 'ai',
     generatedAt: Date.now(),
     note: null,

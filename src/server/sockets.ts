@@ -446,8 +446,9 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       if (!room.encounter) return fail(ack, 'There is no fight running.');
       const enemy = findEnemy(room, room.encounter.enemyId);
       if (!enemy) return fail(ack, 'That enemy is gone.');
-      if (!enemy.lockedBy.includes(found.player.id)) {
-        return fail(ack, 'Only the players locked onto this enemy can submit the treatment.');
+      const canSubmit = enemy.lockedBy.includes(found.player.id) || room.facilitatorId === found.player.id;
+      if (!canSubmit) {
+        return fail(ack, 'Only locked players or the facilitator can submit the treatment.');
       }
 
       const validation = validateTreatment(payload, attackAvailable(room));

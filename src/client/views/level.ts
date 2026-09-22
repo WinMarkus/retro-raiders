@@ -352,15 +352,29 @@ function hudStat(label: string, value: string, sub: string): HTMLElement {
 function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
   const maxSpend = Math.min(LIMITS.maxAttackPerEnemy, state.attack.available);
   let spend = Math.min(maxSpend, Math.max(1, enemy.strength));
+  const canSubmit = state.you.isFacilitator || state.you.lockedEnemyId === enemy.id;
 
   const treatment = h('textarea', {
     class: 'input input--area',
     rows: '3',
     maxlength: String(LIMITS.treatmentText),
     placeholder: 'Reviewers pick up PRs in the morning slot before new work, checked at standup.',
+    disabled: !canSubmit,
   });
-  const owner = h('input', { class: 'input', type: 'text', maxlength: '60', placeholder: 'Optional owner' });
-  const reviewBy = h('input', { class: 'input', type: 'text', maxlength: '40', placeholder: 'next retro' });
+  const owner = h('input', {
+    class: 'input',
+    type: 'text',
+    maxlength: '60',
+    placeholder: 'Optional owner',
+    disabled: !canSubmit,
+  });
+  const reviewBy = h('input', {
+    class: 'input',
+    type: 'text',
+    maxlength: '40',
+    placeholder: 'next retro',
+    disabled: !canSubmit,
+  });
 
   const spendOutput = h('output', { class: 'scale__value', text: String(spend) });
   const spendInput = h('input', {
@@ -370,7 +384,7 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
     max: String(Math.max(maxSpend, 0)),
     step: '1',
     value: String(spend),
-    disabled: maxSpend === 0,
+    disabled: maxSpend === 0 || !canSubmit,
     onInput: (event: Event) => {
       spend = Number.parseInt((event.target as HTMLInputElement).value, 10);
       spendOutput.textContent = String(spend);
@@ -420,6 +434,12 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
         class: 'modal__party',
         text: `Locked on: ${state.encounter?.party.join(', ') ?? ''}`,
       }),
+      canSubmit
+        ? null
+        : h('p', {
+            class: 'notice',
+            text: 'The party is fighting. Locked players or the facilitator can write the treatment.',
+          }),
       field('How does the team want to handle this?', treatment),
       h('div', { class: 'modal__grid' }, field('Owner', owner), field('Review', reviewBy)),
       h(
@@ -439,7 +459,7 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
       h(
         'div',
         { class: 'modal__actions' },
-        button('Strike — freeze this enemy', () => void submit(), 'primary', maxSpend === 0),
+        button('Strike — freeze this enemy', () => void submit(), 'primary', maxSpend === 0 || !canSubmit),
         button('Back off', () => void act('encounter:abandon'), 'ghost'),
       ),
     ),

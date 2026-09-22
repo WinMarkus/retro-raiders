@@ -145,6 +145,26 @@ describe('fallback level', () => {
     }
   });
 
+  it('keeps enemies and power-ups separated on the map', () => {
+    const level = fallbackLevel([
+      topic({ title: 'Flaky tests' }),
+      topic({ title: 'Unclear ownership' }),
+      topic({ title: 'Deploys are scary', type: 'sad' }),
+      topic({ title: 'Reviews are slow' }),
+      topic({ title: 'Pairing was great', type: 'good' }),
+      topic({ title: 'Fast feedback helped', type: 'good' }),
+      topic({ title: 'Good release checklist', type: 'good' }),
+    ]);
+    const objects = [...level.enemies, ...level.powerUps];
+    for (let i = 0; i < objects.length; i += 1) {
+      for (let j = i + 1; j < objects.length; j += 1) {
+        const a = objects[i]!.position;
+        const b = objects[j]!.position;
+        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(MAP.interactRadius * 2);
+      }
+    }
+  });
+
   it('survives a dungeon with nothing in it', () => {
     const level = fallbackLevel([]);
     expect(level.enemies).toEqual([]);
