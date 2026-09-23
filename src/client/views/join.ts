@@ -1,4 +1,4 @@
-import { h } from '../dom.js';
+import { h, patch } from '../dom.js';
 import { createRoom, joinRoom, store } from '../store.js';
 import { button, field } from './ui.js';
 
@@ -10,9 +10,11 @@ function codeFromUrl(): string {
   return match ? match[1]!.toUpperCase() : '';
 }
 
-export function renderJoin(): HTMLElement {
+/** Built once; reconnect events must not wipe a half-typed name. */
+export function createJoin(): { root: HTMLElement; update: () => void } {
   let name = '';
   let code = codeFromUrl();
+  let joining = false;
 
   const nameInput = h('input', {
     class: 'input',
@@ -36,37 +38,51 @@ export function renderJoin(): HTMLElement {
       const element = event.target as HTMLInputElement;
       element.value = element.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
       code = element.value;
+      update();
     },
   });
 
   const submitJoin = (): void => {
     if (!name.trim()) {
       store.joinError = 'Enter a player name first.';
+      update();
       nameInput.focus();
       return;
     }
-    if (code.trim()) void joinRoom(name, code);
-    else void createRoom(name);
+    if (joining) return;
+    joining = true;
+    submitButton.disabled = true;
+    const attempt = code.trim() ? joinRoom(name, code) : createRoom(name);
+    void attempt.finally(() => {
+      joining = false;
+      submitButton.disabled = false;
+      update();
+    });
   };
 
+  const submitButton = button('Create a dungeon', submitJoin);
+  const errorHost = h('div');
   const form = h(
     'div',
     { class: 'join__form' },
     field('Player name', nameInput),
     field('Room code', codeInput, 'Leave empty to open a new dungeon.'),
-    h(
-      'div',
-      { class: 'join__actions' },
-      button(code ? 'Enter the dungeon' : 'Create a dungeon', submitJoin),
-    ),
-    store.joinError ? h('p', { class: 'notice notice--error', text: store.joinError }) : null,
+    h('div', { class: 'join__actions' }, submitButton),
+    errorHost,
   );
+
+  function update(): void {
+    submitButton.textContent = code ? 'Enter the dungeon' : 'Create a dungeon';
+    patch(errorHost, store.joinError, () =>
+      store.joinError ? h('p', { class: 'notice notice--error', role: 'alert', text: store.joinError }) : null,
+    );
+  }
 
   form.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') submitJoin();
   });
 
-  return h(
+  const root = h(
     'section',
     { class: 'join' },
     h('h1', { class: 'join__title', text: 'Retro Raiders' }),
@@ -80,4 +96,6 @@ export function renderJoin(): HTMLElement {
       h('li', { text: 'Fight what comes out of it, together.' }),
     ),
   );
+  update();
+  return { root, update };
 }

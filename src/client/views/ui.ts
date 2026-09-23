@@ -1,5 +1,12 @@
 import { h } from '../dom.js';
-import type { Character, PublicPlayer } from '../../shared/types.js';
+import type { GameState, PublicCharacter, PublicPlayer } from '../../shared/types.js';
+
+/** A screen that is built once and then patched by every state push. */
+export interface View {
+  root: HTMLElement;
+  update(state: GameState): void;
+  destroy?(): void;
+}
 
 export function panel(title: string | null, ...children: Array<Node | string | false | null>): HTMLElement {
   return h(
@@ -23,6 +30,14 @@ export function button(
     disabled,
     onClick,
   });
+}
+
+/** Shows a spinner inside a button while its action is running. */
+export function setBusy(element: HTMLButtonElement, busy: boolean, busyLabel: string, idleLabel: string): void {
+  element.classList.toggle('is-busy', busy);
+  const label = busy ? busyLabel : idleLabel;
+  if (element.textContent !== label) element.textContent = label;
+  element.setAttribute('aria-busy', busy ? 'true' : 'false');
 }
 
 export function emptyState(text: string): HTMLElement {
@@ -68,7 +83,7 @@ export function scaleInput(
   );
 }
 
-export function avatarBadge(character: Character | null, name: string, size: 'sm' | 'lg' = 'sm'): HTMLElement {
+export function avatarBadge(character: PublicCharacter | null, name: string, size: 'sm' | 'lg' = 'sm'): HTMLElement {
   const hue = character?.hue ?? 210;
   return h(
     'span',
@@ -77,10 +92,10 @@ export function avatarBadge(character: Character | null, name: string, size: 'sm
       style: `--avatar-hue:${hue}`,
       title: character ? `${character.characterName} — ${character.className}` : name,
     },
-    character?.avatarImage
+    character?.avatarUrl
       ? h('img', {
           class: 'avatar__image',
-          src: character.avatarImage.dataUrl,
+          src: character.avatarUrl,
           alt: character.characterName,
           loading: 'lazy',
         })
@@ -88,7 +103,7 @@ export function avatarBadge(character: Character | null, name: string, size: 'sm
   );
 }
 
-export function characterCard(character: Character): HTMLElement {
+export function characterCard(character: PublicCharacter): HTMLElement {
   return h(
     'article',
     { class: 'hero-card', style: `--avatar-hue:${character.hue}` },
@@ -126,7 +141,9 @@ export function playerChip(player: PublicPlayer): HTMLElement {
     { class: `chip${player.connected ? '' : ' chip--away'}${player.ready ? ' chip--ready' : ''}` },
     avatarBadge(player.character, player.name),
     h('span', { class: 'chip__name', text: player.name }),
+    player.ready ? h('span', { class: 'chip__check', title: 'Done', 'aria-label': 'done', text: '✓' }) : null,
     player.isFacilitator ? h('span', { class: 'chip__tag', text: 'facilitator' }) : null,
+    player.forging ? h('span', { class: 'chip__tag chip__tag--busy', text: 'forging…' }) : null,
     player.connected ? null : h('span', { class: 'chip__tag', text: 'away' }),
   );
 }

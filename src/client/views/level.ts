@@ -1,8 +1,8 @@
 import { LIMITS, MAP } from '../../shared/constants.js';
-import type { Enemy, GameState, MoveBroadcast, Point, PowerUp } from '../../shared/types.js';
-import { h, mount } from '../dom.js';
+import type { Enemy, GameState, MoveBroadcast, Point, PowerUp, Proposal } from '../../shared/types.js';
+import { h, mount, patch, setDisabled } from '../dom.js';
 import { act, socket, store } from '../store.js';
-import { button, field, panel } from './ui.js';
+import { button, field, panel, setBusy, type View } from './ui.js';
 
 const SPEED = 260; // map units per second
 const EMIT_MS = 80;
@@ -22,9 +22,10 @@ let view: LevelView | null = null;
 let ownPosition: Point = { x: MAP.width / 2, y: MAP.height - 80 };
 let target: Point | null = null;
 let lastEmit = 0;
+let lastSent: Point | null = null;
 let frame = 0;
 let openEncounterId: string | null = null;
-let openEncounterStory: string | null = null;
+let openModal: EncounterModal | null = null;
 const keys = new Set<string>();
 
 /* --------------------------------------------------------- geometry -- */
@@ -102,8 +103,12 @@ function startLoop(getState: () => GameState | null): void {
       step(dt, Boolean(state.encounter));
       const own = view?.tokens.get(state.you.id);
       if (own) place(own, ownPosition);
-      if (now - lastEmit > EMIT_MS) {
+      // Standing still costs nothing: seven idle players used to send ~90
+      // messages a second between them.
+      const moved = !lastSent || lastSent.x !== ownPosition.x || lastSent.y !== ownPosition.y;
+      if (moved && now - lastEmit > EMIT_MS) {
         lastEmit = now;
+        lastSent = { ...ownPosition };
         socket.emit('player:move', ownPosition);
       }
     }
@@ -128,8 +133,9 @@ export function stopLevelLoop(): void {
   window.removeEventListener('keyup', onKeyUp);
   window.removeEventListener('party:moved', onPartyMoved);
   view = null;
+  lastSent = null;
   openEncounterId = null;
-  openEncounterStory = null;
+  openModal = null;
 }
 
 /* ----------------------------------------------------------- nodes -- */
@@ -189,19 +195,24 @@ function tokenNode(name: string, emoji: string, hue: number, isYou: boolean): HT
 
 /* ---------------------------------------------------------- render -- */
 
-export function renderLevel(state: GameState, getState: () => GameState | null): HTMLElement {
-  const level = state.level;
-  if (!level) return panel('The dungeon', h('p', { class: 'empty', text: 'No level generated yet.' }));
-
-  if (!view || view.levelStamp !== level.generatedAt) {
-    view = buildView(state);
-    const me = state.players.find((player) => player.id === state.you.id);
-    if (me) ownPosition = { ...me.position };
-    startLoop(getState);
+export function createLevel(state: GameState, getState: () => GameState | null): View {
+  if (!state.level) {
+    return { root: panel('The dungeon', h('p', { class: 'empty', text: 'No level generated yet.' })), update: () => undefined };
   }
-
-  update(view, state);
-  return view.root;
+  stopLevelLoop();
+  const built = buildView(state);
+  view = built;
+  const me = state.players.find((player) => player.id === state.you.id);
+  if (me) ownPosition = { ...me.position };
+  startLoop(getState);
+  update(built, state);
+  return {
+    root: built.root,
+    update: (next) => {
+      if (next.level) update(built, next);
+    },
+    destroy: stopLevelLoop,
+  };
 }
 
 function buildView(state: GameState): LevelView {
@@ -306,14 +317,17 @@ function update(current: LevelView, state: GameState): void {
   }
 
   const active = level.enemies.filter((enemy) => enemy.status !== 'resolved').length;
-  mount(
+  const collected = level.powerUps.filter((p) => p.collectedBy).length;
+  patch(
     current.hud,
+    [state.attack, active, state.resolutions.length, collected, Boolean(state.encounter), state.you.lockedEnemyId, state.you.isFacilitator],
+    () => [
     h(
       'div',
       { class: 'hud__stats' },
       hudStat('⚔️ Attack points', `${state.attack.available} left`, `${state.attack.spent} spent`),
       hudStat('👾 Enemies', `${active} standing`, `${state.resolutions.length} frozen`),
-      hudStat('🧪 Power-ups', `${level.powerUps.filter((p) => p.collectedBy).length}/${level.powerUps.length}`, 'collected'),
+      hudStat('🧪 Power-ups', `${collected}/${level.powerUps.length}`, 'collected'),
     ),
     h(
       'div',
@@ -327,24 +341,26 @@ function update(current: LevelView, state: GameState): void {
       state.you.lockedEnemyId && !state.encounter
         ? button('Release lock', () => void act('enemy:unlock'), 'ghost')
         : null,
+      state.you.isFacilitator && state.you.lockedEnemyId && !state.encounter
+        ? button('Start this fight now', () => void act('encounter:start'), 'primary')
+        : null,
       state.you.isFacilitator ? button('End the raid', () => void act('game:end'), 'danger') : null,
     ),
+    ],
   );
 
-  if (state.encounter && openEncounterId === state.encounter.enemyId && openEncounterStory !== state.encounter.story) {
-    openEncounterStory = state.encounter.story;
-    const story = current.modalHost.querySelector('.modal__story');
-    if (story) story.textContent = state.encounter.story;
-  }
-
   if (state.encounter && openEncounterId !== state.encounter.enemyId) {
-    openEncounterId = state.encounter.enemyId;
-    openEncounterStory = state.encounter.story;
     const enemy = level.enemies.find((candidate) => candidate.id === state.encounter!.enemyId);
-    if (enemy) mount(current.modalHost, encounterModal(enemy, state));
+    if (enemy) {
+      openEncounterId = state.encounter.enemyId;
+      openModal = encounterModal(enemy, state);
+      mount(current.modalHost, openModal.root);
+    }
+  } else if (state.encounter && openModal) {
+    openModal.update(state);
   } else if (!state.encounter && openEncounterId) {
     openEncounterId = null;
-    openEncounterStory = null;
+    openModal = null;
     mount(current.modalHost);
   }
 }
@@ -359,51 +375,95 @@ function hudStat(label: string, value: string, sub: string): HTMLElement {
   );
 }
 
-function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
-  const maxSpend = Math.min(LIMITS.maxAttackPerEnemy, state.attack.available);
-  let spend = Math.min(maxSpend, Math.max(1, enemy.strength));
-  const canSubmit = state.you.isFacilitator || state.you.lockedEnemyId === enemy.id;
+const SOURCE_BADGE: Record<Proposal['source'], string> = {
+  player: '',
+  oracle: '✨ oracle',
+  merged: '🔗 merged',
+  refined: '🔎 taken further',
+};
 
+interface EncounterModal {
+  root: HTMLElement;
+  update(state: GameState): void;
+}
+
+/**
+ * The fight is a small shared idea board: everyone puts one idea on the table,
+ * the oracle can add or sharpen ideas, the facilitator kicks and merges, and a
+ * locked player (or the facilitator) turns the best one into the treatment.
+ * Built once per fight; pushes only patch the list and button states.
+ */
+function encounterModal(enemy: Enemy, initial: GameState): EncounterModal {
+  let current = initial;
+  let spend = Math.min(Math.min(LIMITS.maxAttackPerEnemy, initial.attack.available), Math.max(1, enemy.strength));
+  const selected = new Set<string>();
+  let merging = false;
+  let seededOwnIdea = false;
+
+  /* ---------------------------------------------------------- your idea */
+  const ideaInput = h('textarea', {
+    class: 'input input--area',
+    rows: '2',
+    maxlength: String(LIMITS.proposalText),
+    placeholder: 'One concrete idea: who does what, and when would we notice it works?',
+  });
+  const ideaButton = button('Put it on the table', () => void submitIdea(), 'primary');
+  const submitIdea = async (): Promise<void> => {
+    const text = ideaInput.value.trim();
+    if (!text) {
+      ideaInput.focus();
+      return;
+    }
+    await act('proposal:submit', { text });
+  };
+  ideaInput.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      void submitIdea();
+    }
+  });
+
+  const oracleButton = button('✨ Ask the oracle for ideas', () => void act('proposal:generate'), 'ghost');
+  const ideasClock = h('span', { class: 'ideas__clock', 'data-ends': String(initial.encounter?.ideasUntil ?? 0) });
+  const extendHost = h('span');
+
+  /* -------------------------------------------------------------- merge */
+  const mergeInput = h('textarea', { class: 'input input--area', rows: '2', maxlength: String(LIMITS.proposalText) });
+  const mergeBar = h('div', { class: 'ideas__merge' });
+  const listHost = h('ol', { class: 'ideas__list' });
+
+  /* ---------------------------------------------------------- treatment */
   const treatment = h('textarea', {
     class: 'input input--area',
     rows: '3',
     maxlength: String(LIMITS.treatmentText),
-    placeholder: 'Reviewers pick up PRs in the morning slot before new work, checked at standup.',
-    disabled: !canSubmit,
+    placeholder: 'Pick an idea above with “Use as treatment”, or write the agreement here.',
   });
-  const owner = h('input', {
-    class: 'input',
-    type: 'text',
-    maxlength: '60',
-    placeholder: 'Optional owner',
-    disabled: !canSubmit,
-  });
-  const reviewBy = h('input', {
-    class: 'input',
-    type: 'text',
-    maxlength: '40',
-    placeholder: 'next retro',
-    disabled: !canSubmit,
-  });
-
+  const owner = h('input', { class: 'input', type: 'text', maxlength: '60', placeholder: 'Optional owner' });
+  const reviewBy = h('input', { class: 'input', type: 'text', maxlength: '40', placeholder: 'next retro' });
+  const maxSpend = (): number => Math.min(LIMITS.maxAttackPerEnemy, current.attack.available);
   const spendOutput = h('output', { class: 'scale__value', text: String(spend) });
   const spendInput = h('input', {
     class: 'scale__input',
     type: 'range',
     min: '0',
-    max: String(Math.max(maxSpend, 0)),
+    max: String(Math.max(maxSpend(), 0)),
     step: '1',
     value: String(spend),
-    disabled: maxSpend === 0 || !canSubmit,
     onInput: (event: Event) => {
       spend = Number.parseInt((event.target as HTMLInputElement).value, 10);
       spendOutput.textContent = String(spend);
     },
   });
-
+  const spendLabel = h('span', { class: 'field__label' });
+  const spendHint = h('span', { class: 'field__hint' });
   const error = h('p', { class: 'notice notice--error', hidden: true });
-
-  const submit = async (): Promise<void> => {
+  const lockedNotice = h('p', {
+    class: 'notice',
+    text: 'Anyone can add ideas. Locked players or the facilitator write the final treatment.',
+  });
+  const strikeButton = button('Strike — freeze this enemy', () => void strike(), 'primary');
+  const strike = async (): Promise<void> => {
     const result = await act('encounter:resolve', {
       treatment: treatment.value,
       owner: owner.value,
@@ -416,7 +476,94 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
     }
   };
 
-  return h(
+  const useAsTreatment = (text: string): void => {
+    treatment.value = text;
+    treatment.focus();
+    treatment.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+
+  const proposalItem = (proposal: Proposal, state: GameState): HTMLElement => {
+    const facilitator = state.you.isFacilitator;
+    const mine = state.encounter?.mine === proposal.id;
+    const canSubmit = facilitator || state.you.lockedEnemyId === enemy.id;
+    const badge = mine ? 'yours' : SOURCE_BADGE[proposal.source];
+    return h(
+      'li',
+      { class: `idea idea--${proposal.source}${mine ? ' idea--mine' : ''}` },
+      facilitator
+        ? h('input', {
+            class: 'idea__pick',
+            type: 'checkbox',
+            'aria-label': 'Select for merging',
+            checked: selected.has(proposal.id),
+            onChange: (event: Event) => {
+              if ((event.target as HTMLInputElement).checked) selected.add(proposal.id);
+              else selected.delete(proposal.id);
+              renderMergeBar();
+            },
+          })
+        : null,
+      h(
+        'div',
+        { class: 'idea__body' },
+        h('p', { class: 'idea__text', text: proposal.text }),
+        badge ? h('span', { class: 'idea__badge', text: badge }) : null,
+      ),
+      h(
+        'div',
+        { class: 'idea__actions' },
+        canSubmit ? button('Use as treatment', () => useAsTreatment(proposal.text), 'ghost') : null,
+        button('Take further', () => void act('proposal:refine', { proposalId: proposal.id }), 'ghost', state.encounter?.oracleBusy),
+        facilitator || mine
+          ? h('button', {
+              class: 'idea__kick',
+              type: 'button',
+              title: mine && !facilitator ? 'Withdraw my idea' : 'Kick this idea',
+              'aria-label': mine && !facilitator ? 'Withdraw my idea' : 'Kick this idea',
+              text: '✕',
+              onClick: () => void act('proposal:remove', { proposalId: proposal.id }),
+            })
+          : null,
+      ),
+    );
+  };
+
+  function renderMergeBar(): void {
+    const ids = [...selected];
+    patch(mergeBar, [current.you.isFacilitator, ids, merging], () => {
+      if (!current.you.isFacilitator || ids.length < 2) return null;
+      if (!merging) {
+        return button(`Merge ${ids.length} ideas`, () => {
+          merging = true;
+          const texts = (current.encounter?.proposals ?? []).filter((p) => selected.has(p.id)).map((p) => p.text);
+          mergeInput.value = texts.join(' + ');
+          renderMergeBar();
+          mergeInput.focus();
+        }, 'primary');
+      }
+      return [
+        field('Merged idea — edit before saving', mergeInput),
+        h(
+          'div',
+          { class: 'row' },
+          button('Save merged idea', async () => {
+            const result = await act('proposal:merge', { proposalIds: ids, text: mergeInput.value });
+            if (result.ok) {
+              selected.clear();
+              merging = false;
+              renderMergeBar();
+            }
+          }, 'primary'),
+          button('Cancel', () => {
+            merging = false;
+            renderMergeBar();
+          }, 'ghost'),
+        ),
+      ];
+    });
+  }
+
+  const root = h(
     'div',
     { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Encounter: ${enemy.name}` },
     h(
@@ -440,39 +587,101 @@ function encounterModal(enemy: Enemy, state: GameState): HTMLElement {
         h('h3', { class: 'modal__subtitle', text: 'Born from' }),
         h('ul', {}, ...enemy.sourceTopics.map((topic) => h('li', { text: topic }))),
       ),
-      state.encounter?.story ? h('p', { class: 'modal__story', text: state.encounter.story }) : null,
-      h('p', {
-        class: 'modal__party',
-        text: `Locked on: ${state.encounter?.party.join(', ') ?? ''}`,
-      }),
-      canSubmit
-        ? null
-        : h('p', {
-            class: 'notice',
-            text: 'The party is fighting. Locked players or the facilitator can write the treatment.',
-          }),
-      field('How does the team want to handle this?', treatment),
-      h('div', { class: 'modal__grid' }, field('Owner', owner), field('Review', reviewBy)),
+      h('p', { class: 'modal__story', text: initial.encounter?.story ?? '' }),
+      h('p', { class: 'modal__party' }),
       h(
-        'div',
-        { class: 'scale' },
-        h('span', { class: 'field__label', text: `Attack points to spend (${state.attack.available} available)` }),
-        h('div', { class: 'scale__row' }, spendInput, spendOutput),
-        h('span', {
-          class: 'field__hint',
-          text:
-            maxSpend === 0
-              ? 'Collect a power-up first. Every fight must spend at least one attack point.'
-              : 'Points are priority, not damage: spend more on what the team really wants fixed.',
-        }),
+        'section',
+        { class: 'ideas', 'aria-label': 'Ideas on the table' },
+        h(
+          'header',
+          { class: 'ideas__head' },
+          h('h3', { class: 'modal__subtitle', text: 'Ideas on the table' }),
+          h('span', { class: 'ideas__timer' }, 'ideas round ', ideasClock),
+          extendHost,
+        ),
+        listHost,
+        mergeBar,
+        field('Your idea (one each — sending again edits it)', ideaInput),
+        h('div', { class: 'row' }, ideaButton, oracleButton),
       ),
-      error,
+      h(
+        'section',
+        { class: 'treatment' },
+        h('h3', { class: 'modal__subtitle', text: 'The treatment' }),
+        lockedNotice,
+        field('How does the team want to handle this?', treatment),
+        h('div', { class: 'modal__grid' }, field('Owner', owner), field('Review', reviewBy)),
+        h('div', { class: 'scale' }, spendLabel, h('div', { class: 'scale__row' }, spendInput, spendOutput), spendHint),
+        error,
+      ),
       h(
         'div',
         { class: 'modal__actions' },
-        button('Strike — freeze this enemy', () => void submit(), 'primary', maxSpend === 0 || !canSubmit),
+        strikeButton,
         button('Back off', () => void act('encounter:abandon'), 'ghost'),
       ),
     ),
   );
+
+  function update(state: GameState): void {
+    current = state;
+    const encounter = state.encounter;
+    if (!encounter) return;
+    const canSubmit = state.you.isFacilitator || state.you.lockedEnemyId === enemy.id;
+    const proposals = encounter.proposals;
+    const own = proposals.find((proposal) => proposal.id === encounter.mine);
+
+    // Pre-fill your own idea once (e.g. after a reload), never while typing.
+    if (!seededOwnIdea && own && !ideaInput.value) {
+      ideaInput.value = own.text;
+      seededOwnIdea = true;
+    }
+    ideaButton.textContent = own ? 'Update my idea' : 'Put it on the table';
+    setBusy(oracleButton, encounter.oracleBusy, 'The oracle is thinking…', '✨ Ask the oracle for ideas');
+    setDisabled(oracleButton, encounter.oracleBusy || proposals.length >= LIMITS.maxProposals);
+    ideasClock.dataset.ends = String(encounter.ideasUntil);
+    patch(extendHost, state.you.isFacilitator, () =>
+      state.you.isFacilitator ? button('+1 min', () => void act('encounter:extend'), 'ghost') : null,
+    );
+
+    for (const id of [...selected]) if (!proposals.some((proposal) => proposal.id === id)) selected.delete(id);
+    patch(listHost, [proposals, encounter.mine, encounter.oracleBusy, canSubmit, state.you.isFacilitator], () =>
+      proposals.length === 0
+        ? h('li', { class: 'ideas__empty', text: 'No ideas yet. Add yours, or ask the oracle to get things going.' })
+        : proposals.map((proposal) => proposalItem(proposal, state)),
+    );
+    // Re-apply selection after a rebuild so ticked boxes stay ticked.
+    for (const box of listHost.querySelectorAll<HTMLInputElement>('.idea__pick')) {
+      const item = box.closest('li');
+      const index = item ? [...listHost.children].indexOf(item) : -1;
+      const proposal = proposals[index];
+      if (proposal) box.checked = selected.has(proposal.id);
+    }
+    renderMergeBar();
+
+    const party = root.querySelector('.modal__party');
+    if (party) party.textContent = `Locked on: ${encounter.party.join(', ') || 'the facilitator'}`;
+    const story = root.querySelector('.modal__story');
+    if (story && story.textContent !== encounter.story) story.textContent = encounter.story;
+
+    const max = Math.max(maxSpend(), 0);
+    spendInput.max = String(max);
+    if (spend > max) {
+      spend = max;
+      spendInput.value = String(max);
+      spendOutput.textContent = String(max);
+    }
+    spendLabel.textContent = `Attack points to spend (${state.attack.available} available)`;
+    spendHint.textContent =
+      max === 0
+        ? 'Collect a power-up first. Every fight must spend at least one attack point.'
+        : 'Points are priority, not damage: spend more on what the team really wants fixed.';
+    lockedNotice.hidden = canSubmit;
+    for (const control of [treatment, owner, reviewBy]) setDisabled(control, !canSubmit);
+    setDisabled(spendInput, max === 0 || !canSubmit);
+    setDisabled(strikeButton, max === 0 || !canSubmit);
+  }
+
+  update(initial);
+  return { root, update };
 }

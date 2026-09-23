@@ -1,4 +1,4 @@
-import { MAP } from '../shared/constants.js';
+import { IDEA_WINDOW_MS, MAP } from '../shared/constants.js';
 import type { Enemy, PowerUp, Resolution, Summary, Topic } from '../shared/types.js';
 import { connectedPlayers, type PlayerRecord, type Room } from './state.js';
 import type { TreatmentInput } from './validation.js';
@@ -99,19 +99,39 @@ export function lockOn(room: Room, player: PlayerRecord, enemyId: string): LockO
   player.lockedEnemyId = enemy.id;
 
   if (enemy.lockedBy.length >= encounterThreshold(room) && !room.encounter) {
-    enemy.status = 'locked';
-    room.encounter = {
-      enemyId: enemy.id,
-      openedAt: Date.now(),
-      party: enemy.lockedBy
-        .map((id) => room.players.get(id)?.name)
-        .filter((name): name is string => Boolean(name)),
-      story: encounterStory(room, enemy),
-    };
+    openEncounter(room, enemy);
     return { ok: true, opened: true };
   }
 
   return { ok: true, opened: false };
+}
+
+export function openEncounter(room: Room, enemy: Enemy, now = Date.now()): void {
+  enemy.status = 'locked';
+  room.proposalAuthors.clear();
+  room.encounter = {
+    enemyId: enemy.id,
+    openedAt: now,
+    party: enemy.lockedBy
+      .map((id) => room.players.get(id)?.name)
+      .filter((name): name is string => Boolean(name)),
+    story: encounterStory(room, enemy),
+    proposals: [],
+    ideasUntil: now + IDEA_WINDOW_MS,
+    oracleBusy: false,
+  };
+}
+
+/**
+ * The facilitator can skip the majority vote, but only for the enemy they are
+ * locked onto themselves, so the choice is still visible on the map.
+ */
+export function forceEncounter(room: Room, player: PlayerRecord): LockOutcome {
+  if (room.encounter) return { ok: false, error: 'The party is already in a fight.' };
+  const enemy = player.lockedEnemyId ? findEnemy(room, player.lockedEnemyId) : undefined;
+  if (!enemy || enemy.status === 'resolved') return { ok: false, error: 'Lock onto an enemy first.' };
+  openEncounter(room, enemy);
+  return { ok: true, opened: true };
 }
 
 export function resolveEnemy(
@@ -132,6 +152,9 @@ export function resolveEnemy(
     reviewBy: input.reviewBy,
     attackSpent: input.attackPoints,
     party: party.length > 0 ? party : ['the party'],
+    alternatives: (room.encounter?.enemyId === enemy.id ? room.encounter.proposals : [])
+      .map((proposal) => proposal.text)
+      .filter((text) => text.trim() !== input.treatment.trim()),
     resolvedAt: Date.now(),
   };
   resolution.story = victoryStory(resolution);
@@ -146,6 +169,7 @@ export function resolveEnemy(
   }
   enemy.lockedBy = [];
   if (room.encounter?.enemyId === enemy.id) room.encounter = null;
+  room.proposalAuthors.clear();
 
   return resolution;
 }

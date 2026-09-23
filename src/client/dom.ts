@@ -129,3 +129,29 @@ export function formatClock(totalSeconds: number): string {
 export function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
+
+const signatures = new WeakMap<Element, string>();
+
+/**
+ * Re-renders a region only when the data it shows actually changed. Rebuilding
+ * on every push used to eat clicks (mousedown on one button, mouseup on its
+ * replacement) and restart animations for everyone in the room.
+ */
+export function patch(host: Element, signature: unknown, build: () => Child | Child[]): void {
+  const key = JSON.stringify(signature);
+  if (signatures.get(host) === key) return;
+  signatures.set(host, key);
+  const built = build();
+  mount(host, ...(Array.isArray(built) ? built : [built]));
+}
+
+/** Sets a control's disabled state without touching anything else about it. */
+export function setDisabled(element: HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement, disabled: boolean): void {
+  if (element.disabled !== disabled) element.disabled = disabled;
+}
+
+/** Soft timers only count; they never stop anyone from doing anything. */
+export function countdown(endsAt: number, now: number): { text: string; over: boolean } {
+  const left = Math.ceil((endsAt - now) / 1000);
+  return left > 0 ? { text: formatClock(left), over: false } : { text: `+${formatClock(-left)}`, over: true };
+}

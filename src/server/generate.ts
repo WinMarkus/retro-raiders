@@ -401,14 +401,38 @@ export function fallbackLevel(topics: Topic[], note: string | null = null): Leve
   const problems = topics.filter((topic) => topic.type !== 'good');
   const goods = topics.filter((topic) => topic.type === 'good');
 
-  const clusters = clusterTopics(problems).slice(0, LIMITS.maxEnemies);
-  const enemies: Enemy[] = clusters.map((cluster, index) => {
+  // Two clusters that summon the same monster are the same problem: merge them
+  // into one stronger enemy instead of fielding two Pipeline Wyrms.
+  const themed = new Map<string, TopicCluster>();
+  const merged: Array<{ cluster: TopicCluster; entry: (typeof BESTIARY)[number] | undefined }> = [];
+  for (const cluster of clusterTopics(problems)) {
     const text = cluster.topics.map((topic) => `${topic.title} ${topic.description}`).join(' ').toLowerCase();
     const entry = BESTIARY.find((candidate) => candidate.match.test(text));
+    const existing = entry ? themed.get(entry.name) : undefined;
+    if (existing) {
+      existing.topics.push(...cluster.topics);
+      existing.words.push(...cluster.words);
+      continue;
+    }
+    if (entry) themed.set(entry.name, cluster);
+    merged.push({ cluster, entry });
+  }
+  merged.sort((a, b) => b.cluster.topics.length - a.cluster.topics.length);
+  const clusters = merged.slice(0, LIMITS.maxEnemies);
+  const usedGeneric = new Set<string>();
+  const enemies: Enemy[] = clusters.map(({ cluster, entry }, index) => {
     const intensity = Math.max(...cluster.topics.map((topic) => topic.intensity));
     const size = cluster.topics.length;
     const seed = cluster.topics.map((topic) => topic.id).join('|');
-    const name = entry?.name ?? pick(GENERIC_ENEMIES, `enemy:${seed}`);
+    let name = entry?.name ?? pick(GENERIC_ENEMIES, `enemy:${seed}`);
+    if (!entry) {
+      // Generic names are drawn by hash, so skip ahead to one not yet on the map.
+      const offset = GENERIC_ENEMIES.indexOf(name);
+      for (let step = 0; step < GENERIC_ENEMIES.length && usedGeneric.has(name); step += 1) {
+        name = GENERIC_ENEMIES[(offset + step + 1) % GENERIC_ENEMIES.length]!;
+      }
+      usedGeneric.add(name);
+    }
     const sadness = cluster.topics.filter((topic) => topic.type === 'sad').length;
     return {
       id: `enemy-${slug(name, 'foe')}-${index}`,
@@ -526,9 +550,11 @@ export function sanitizeLevel(raw: unknown, topics: Topic[]): Level | null {
   for (const entry of enemiesRaw.slice(0, LIMITS.maxEnemies)) {
     if (typeof entry !== 'object' || entry === null) continue;
     const record = entry as Record<string, unknown>;
-    const name = sanitizeSingleLine(record.name, 60);
-    if (!name) continue;
+    const rawName = sanitizeSingleLine(record.name, 60);
+    if (!rawName) continue;
     const sourceTopics = matchTopics(record.sourceTopics, (topic) => topic.type !== 'good');
+    const twins = enemies.filter((enemy) => enemy.name === rawName || enemy.name.startsWith(`${rawName} `)).length;
+    const name = twins > 0 ? `${rawName} ${['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'][twins - 1] ?? twins + 1}` : rawName;
     if (sourceTopics.length === 0) continue;
     const kindRaw = sanitizeSingleLine(record.kind, 20).toLowerCase() as EnemyKind;
     const index = enemies.length;

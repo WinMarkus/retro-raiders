@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { EMPTY_ROOM_TTL_MS, LIMITS, MAP, STALE_ROOM_TTL_MS } from '../shared/constants.js';
 import type {
   CheckIn,
+  PhaseTimer,
   Character,
   EncounterState,
   Level,
@@ -18,6 +19,8 @@ export interface PlayerRecord {
   socketId: string | null;
   connected: boolean;
   ready: boolean;
+  /** Set while this player's character is being generated; blocks only them. */
+  forging: boolean;
   checkIn: CheckIn | null;
   character: Character | null;
   position: Point;
@@ -36,14 +39,28 @@ export interface Room {
   /** topicId -> topic. Authorship lives in `topicAuthors`, never in the view. */
   topics: Map<string, Topic>;
   topicAuthors: Map<string, string>;
+  /** proposalId -> playerId for the open fight. Never sent to browsers. */
+  proposalAuthors: Map<string, string>;
+  timer: PhaseTimer | null;
   level: Level | null;
   encounter: EncounterState | null;
   resolutions: Resolution[];
   attackCollected: number;
   attackSpent: number;
   aiTextModel: string | null;
+  /** Room-wide generation (the dungeon). Character forging is per player. */
   generation: { busy: boolean; message: string | null };
   save: SaveState;
+  battleArt: {
+    status: 'idle' | 'painting' | 'done' | 'error';
+    image: { dataUrl: string; mediaType: string; model: string } | null;
+    prompt: string | null;
+    message: string | null;
+  };
+  /** Bumped on every state push; clients echo it back when restoring. */
+  version: number;
+  /** True when rebuilt from client copies after a server restart. */
+  restored: boolean;
 }
 
 export type JoinError = 'name-taken' | 'room-full';
@@ -82,6 +99,8 @@ function emptyRoom(code: string): Room {
     players: new Map(),
     topics: new Map(),
     topicAuthors: new Map(),
+    proposalAuthors: new Map(),
+    timer: null,
     level: null,
     encounter: null,
     resolutions: [],
@@ -90,6 +109,9 @@ function emptyRoom(code: string): Room {
     aiTextModel: null,
     generation: { busy: false, message: null },
     save: { status: 'idle', url: null, message: null },
+    battleArt: { status: 'idle', image: null, prompt: null, message: null },
+    version: 0,
+    restored: false,
   };
 }
 
@@ -112,6 +134,14 @@ export class RoomStore {
     return room;
   }
 
+  /** Recreates a room under a known code, used only when restoring. */
+  createWithCode(code: string): Room | null {
+    if (this.rooms.has(code)) return null;
+    const room = emptyRoom(code);
+    this.rooms.set(code, room);
+    return room;
+  }
+
   get(code: string): Room | undefined {
     return this.rooms.get(code);
   }
@@ -125,11 +155,16 @@ export class RoomStore {
     name: string,
     socketId: string,
   ): { ok: true; player: PlayerRecord } | { ok: false; error: JoinError } {
-    if (room.players.size >= LIMITS.maxPlayers) return { ok: false, error: 'room-full' };
-    const taken = [...room.players.values()].some(
+    const existing = [...room.players.values()].find(
       (player) => player.name.toLowerCase() === name.toLowerCase(),
     );
-    if (taken) return { ok: false, error: 'name-taken' };
+    if (existing) {
+      // A lost tab or a new browser must not lock someone out of their own
+      // seat: an offline player's name can be reclaimed, an online one cannot.
+      if (existing.connected) return { ok: false, error: 'name-taken' };
+      return { ok: true, player: this.reattach(room, existing.id, socketId)! };
+    }
+    if (room.players.size >= LIMITS.maxPlayers) return { ok: false, error: 'room-full' };
 
     const now = Date.now();
     const player: PlayerRecord = {
@@ -138,6 +173,7 @@ export class RoomStore {
       socketId,
       connected: true,
       ready: false,
+      forging: false,
       checkIn: null,
       character: null,
       position: spawnPoint(room.players.size),
@@ -214,6 +250,8 @@ export function restartCampaign(room: Room, now = Date.now()): void {
   room.phase = 'forge';
   room.topics.clear();
   room.topicAuthors.clear();
+  room.proposalAuthors.clear();
+  room.timer = null;
   room.level = null;
   room.encounter = null;
   room.resolutions = [];
@@ -221,10 +259,12 @@ export function restartCampaign(room: Room, now = Date.now()): void {
   room.attackSpent = 0;
   room.generation = { busy: false, message: null };
   room.save = { status: 'idle', url: null, message: null };
+  room.battleArt = { status: 'idle', image: null, prompt: null, message: null };
 
   const players = [...room.players.values()].sort((a, b) => a.joinedAt - b.joinedAt);
   players.forEach((player, index) => {
     player.ready = false;
+    player.forging = false;
     player.checkIn = null;
     player.character = null;
     player.position = spawnPoint(index);

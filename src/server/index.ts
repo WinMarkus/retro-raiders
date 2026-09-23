@@ -22,6 +22,15 @@ httpServer.listen(port, host, () => {
   );
 });
 
+// Rooms live in this process. Dying over one stray error would end every raid
+// on the server, so log it and keep serving.
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] unhandled rejection:', reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[process] uncaught exception:', error);
+});
+
 let shuttingDown = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {

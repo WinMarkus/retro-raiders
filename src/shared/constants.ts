@@ -60,9 +60,16 @@ export const LIMITS = {
   maxEnemies: 8,
   maxPowerUps: 8,
   maxAttackPerEnemy: 12,
+  proposalText: 300,
+  maxProposals: 16,
+  maxTimerMinutes: 30,
   scaleMin: 1,
   scaleMax: 5,
 } as const;
+
+/** Soft window for collecting ideas in a fight. Shown, never enforced. */
+export const IDEA_WINDOW_MS = 2 * 60_000;
+export const TIMER_PRESETS = [2, 5, 10] as const;
 
 export const EMPTY_ROOM_TTL_MS = 1000 * 60 * 15;
 export const STALE_ROOM_TTL_MS = 1000 * 60 * 60 * 8;

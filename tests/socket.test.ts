@@ -467,3 +467,307 @@ describe('the server itself', () => {
     expect(body.app).toBe('Retro Raiders: The Blocker Dungeon');
   });
 });
+
+describe('a full party of seven', () => {
+  it('lets everyone forge at the same moment', async () => {
+    const { socket: host, code } = await joinedRoom('Host');
+    const party = [host];
+    for (let i = 1; i < 7; i += 1) {
+      const guest = await connect();
+      const joined = await emit<JoinResult>(guest, 'room:join', { name: `Dev${i}`, code });
+      expect(joined.ok).toBe(true);
+      party.push(guest);
+    }
+    const results = await Promise.all(
+      party.map(async (socket) => {
+        await emit<ActionResult>(socket, 'checkin:set', CHECK_IN);
+        return emit<ActionResult>(socket, 'character:forge');
+      }),
+    );
+    expect(results.every((result) => result.ok)).toBe(true);
+    const state = await nextState(host, (value) => value.players.every((player) => player.character));
+    expect(state.players).toHaveLength(7);
+    expect(state.players.some((player) => player.forging)).toBe(false);
+  });
+
+  it('refuses a second forge while the first is still running for that player', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return { ok: false, status: 503, text: async () => 'busy' } as unknown as Response;
+      }),
+    );
+    const { socket: host } = await joinedRoom('Ada');
+    await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    const [first, second] = await Promise.all([
+      emit<ActionResult>(host, 'character:forge'),
+      emit<ActionResult>(host, 'character:forge'),
+    ]);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+  });
+});
+
+describe('surviving trouble', () => {
+  it('lets a player reclaim their seat by name after losing the session', async () => {
+    const { socket: first, code } = await joinedRoom('Ada');
+    const before = await nextState(first);
+    first.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const fresh = await connect();
+    const back = await emit<JoinResult>(fresh, 'room:join', { name: 'ada', code });
+    expect(back.ok).toBe(true);
+    if (back.ok) expect(back.playerId).toBe(before.you.id);
+  });
+
+  it('rebuilds a room from client copies after the server lost it', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+    const hostCopy = await reachLevel(host, TOPICS);
+    const guestCopy = await nextState(guest, (state) => state.phase === 'level');
+
+    // What a restart on the free tier does to in-memory rooms.
+    server.store.delete(code);
+    host.close();
+    guest.close();
+
+    const hostAgain = await connect();
+    const restored = await emit<JoinResult>(hostAgain, 'room:rejoin', { code, playerId: hostCopy.you.id, state: hostCopy });
+    expect(restored.ok).toBe(true);
+    const guestAgain = await connect();
+    const guestBack = await emit<JoinResult>(guestAgain, 'room:rejoin', { code, playerId: guestCopy.you.id, state: guestCopy });
+    expect(guestBack.ok).toBe(true);
+
+    const state = await nextState(hostAgain, (value) => value.players.filter((p) => p.connected).length === 2);
+    expect(state.phase).toBe('level');
+    expect(state.level?.enemies.length).toBe(hostCopy.level?.enemies.length);
+    expect(state.you.isFacilitator).toBe(true);
+    expect(state.you.topics).toHaveLength(TOPICS.length);
+    expect(state.topicCount).toBe(TOPICS.length);
+  });
+
+  it('never lets a client copy overwrite a live room', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const live = await nextState(host);
+    const intruder = await connect();
+    const forged = { ...live, phase: 'victory' };
+    const result = await emit<JoinResult>(intruder, 'room:rejoin', { code, playerId: 'someone-else', state: forged });
+    expect(result.ok).toBe(false);
+    expect(server.store.get(code)?.phase).toBe('forge');
+  });
+
+  it('survives a handler that throws on a hostile payload', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    // Simulate a bug deep inside a handler.
+    const originalGet = server.store.get.bind(server.store);
+    server.store.get = () => {
+      throw new Error('simulated bug');
+    };
+    try {
+      const result = await emit<ActionResult>(host, 'topic:add', { type: 'bad', title: 'Anything' });
+      expect(result.ok).toBe(false);
+    } finally {
+      server.store.get = originalGet;
+    }
+    const health = await fetch(`${url}/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it('keeps portrait images out of the state and serves them over HTTP', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const state = await nextState(host);
+    const room = server.store.get(code)!;
+    const player = room.players.get(state.you.id)!;
+    const png = Buffer.from('fake-png-bytes');
+    player.character = {
+      ...(await import('../src/server/generate.js')).fallbackCharacter('Ada', { ...CHECK_IN }),
+      avatarImage: { dataUrl: `data:image/png;base64,${png.toString('base64')}`, mediaType: 'image/png', model: 'x', cost: null },
+    };
+    await emit<ActionResult>(host, 'ready:set', { ready: true });
+    const next = await nextState(host, (value) => Boolean(value.you.character));
+    expect(JSON.stringify(next)).not.toContain('base64');
+    const avatarUrl = next.you.character!.avatarUrl!;
+    const response = await fetch(`${url}${avatarUrl}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('image/png');
+    expect(Buffer.from(await response.arrayBuffer()).equals(png)).toBe(true);
+  });
+});
+
+describe('the topic board and soft timers', () => {
+  it('shows every topic to everyone, without authors, only while the board is open', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+    await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    await emit<ActionResult>(host, 'character:forge');
+    await emit<ActionResult>(host, 'phase:topics');
+    await emit<ActionResult>(host, 'topic:add', { type: 'bad', title: 'Review takes too long', intensity: 3 });
+    const seen = await nextState(guest, (state) => state.board.length === 1);
+    expect(seen.board[0]!.title).toBe('Review takes too long');
+    expect(JSON.stringify(seen.board)).not.toContain('Ada');
+    expect(seen.you.topics).toHaveLength(0);
+  });
+
+  it('lets only the facilitator set a timer, and the timer lapses with the phase', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+    expect((await emit<ActionResult>(guest, 'timer:set', { minutes: 5 })).ok).toBe(false);
+    expect((await emit<ActionResult>(host, 'timer:set', { minutes: 5 })).ok).toBe(true);
+    const timed = await nextState(guest, (state) => Boolean(state.timer));
+    expect(timed.timer!.endsAt - timed.serverTime).toBeGreaterThan(4 * 60_000);
+
+    await emit<ActionResult>(host, 'checkin:set', CHECK_IN);
+    await emit<ActionResult>(host, 'character:forge');
+    await emit<ActionResult>(host, 'phase:topics');
+    const next = await nextState(guest, (state) => state.phase === 'topics');
+    expect(next.timer).toBeNull();
+  });
+});
+
+describe('the idea board in a fight', () => {
+  async function fight(): Promise<{ host: ClientSocket; guest: ClientSocket; state: GameState; code: string }> {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+    const level = await reachLevel(host, TOPICS);
+    const enemyId = level.level!.enemies[0]!.id;
+    await emit<ActionResult>(host, 'enemy:lock', { enemyId });
+    // Two players means a majority is two; the facilitator skips the vote.
+    const started = await emit<ActionResult>(host, 'encounter:start');
+    expect(started.ok).toBe(true);
+    const state = await nextState(guest, (value) => Boolean(value.encounter));
+    return { host, guest, state, code };
+  }
+
+  it('lets the facilitator start a fight without a majority', async () => {
+    const { state } = await fight();
+    expect(state.encounter!.proposals).toEqual([]);
+    expect(state.encounter!.ideasUntil).toBeGreaterThan(state.encounter!.openedAt);
+  });
+
+  it('collects one idea per person, lets them edit it, and hides who wrote what', async () => {
+    const { host, guest } = await fight();
+    await emit<ActionResult>(guest, 'proposal:submit', { text: 'Review slot every morning' });
+    await emit<ActionResult>(guest, 'proposal:submit', { text: 'Review slot every morning at nine' });
+    await emit<ActionResult>(host, 'proposal:submit', { text: 'Smaller pull requests' });
+    const guestView = await nextState(guest, (state) => state.encounter?.proposals.length === 2);
+    expect(guestView.encounter!.proposals.map((p) => p.text)).toContain('Review slot every morning at nine');
+    const mine = guestView.encounter!.proposals.find((p) => p.id === guestView.encounter!.mine);
+    expect(mine?.text).toBe('Review slot every morning at nine');
+    expect(JSON.stringify(guestView.encounter!.proposals)).not.toMatch(/Ada|Grace/);
+  });
+
+  it('lets the facilitator kick and merge, but nobody else', async () => {
+    const { host, guest } = await fight();
+    await emit<ActionResult>(guest, 'proposal:submit', { text: 'Review slot every morning' });
+    await emit<ActionResult>(host, 'proposal:submit', { text: 'Smaller pull requests' });
+    const both = await nextState(host, (state) => state.encounter?.proposals.length === 2);
+    const ids = both.encounter!.proposals.map((p) => p.id);
+
+    const hostIdea = both.encounter!.mine!;
+    expect((await emit<ActionResult>(guest, 'proposal:remove', { proposalId: hostIdea })).ok).toBe(false);
+    expect((await emit<ActionResult>(guest, 'proposal:merge', { proposalIds: ids, text: 'x' })).ok).toBe(false);
+
+    const merged = await emit<ActionResult>(host, 'proposal:merge', {
+      proposalIds: ids,
+      text: 'Small PRs, reviewed in a morning slot',
+    });
+    expect(merged.ok).toBe(true);
+    const after = await nextState(guest, (state) => state.encounter?.proposals.length === 1);
+    expect(after.encounter!.proposals[0]!.source).toBe('merged');
+    // Their idea was merged away, so the guest may put a new one on the table.
+    expect(after.encounter!.mine).toBeNull();
+
+    await emit<ActionResult>(host, 'proposal:remove', { proposalId: after.encounter!.proposals[0]!.id });
+    const empty = await nextState(guest, (state) => state.encounter?.proposals.length === 0);
+    expect(empty.encounter!.proposals).toEqual([]);
+  });
+
+  it('asks the oracle for ideas and to take one further, locally without a key', async () => {
+    const { host, guest } = await fight();
+    const generated = await emit<ActionResult>(guest, 'proposal:generate');
+    expect(generated.ok).toBe(true);
+    const withIdeas = await nextState(host, (state) => (state.encounter?.proposals.length ?? 0) >= 1 && !state.encounter!.oracleBusy);
+    expect(withIdeas.encounter!.proposals.every((p) => p.source === 'oracle')).toBe(true);
+
+    const first = withIdeas.encounter!.proposals[0]!;
+    const refined = await emit<ActionResult>(host, 'proposal:refine', { proposalId: first.id });
+    expect(refined.ok).toBe(true);
+    const after = await nextState(host, (state) => state.encounter!.proposals.some((p) => p.source === 'refined'));
+    const index = after.encounter!.proposals.findIndex((p) => p.source === 'refined');
+    expect(after.encounter!.proposals[index - 1]!.id).toBe(first.id);
+  });
+
+  it('keeps the ideas that were not chosen on the resolution', async () => {
+    const { host, code } = await fight();
+    await emit<ActionResult>(host, 'proposal:submit', { text: 'Smaller pull requests' });
+    await nextState(host, (state) => state.encounter?.proposals.length === 1);
+    const room = server.store.get(code)!;
+    room.attackCollected = 3;
+    const resolved = await emit<ActionResult>(host, 'encounter:resolve', {
+      treatment: 'Reviewers take a morning slot before new work',
+      attackPoints: 1,
+    });
+    expect(resolved.ok).toBe(true);
+    expect(room.resolutions.at(-1)!.alternatives).toEqual(['Smaller pull requests']);
+  });
+});
+
+describe('the victory painting', () => {
+  it('says it is unavailable without an image model', async () => {
+    const { socket: host } = await joinedRoom('Ada');
+    const state = await nextState(host);
+    expect(state.battleArt.status).toBe('unavailable');
+  });
+
+  it('paints the whole party and the dungeon when the raid ends, served outside the state', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-key';
+    process.env.OPENROUTER_IMAGE_MODEL = 'openai/gpt-image-2';
+    const png = Buffer.from('epic-battle-png');
+    const prompts: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: { body?: string }) => {
+        if (String(input).endsWith('/images')) {
+          prompts.push(JSON.parse(init?.body ?? '{}').prompt);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ data: [{ b64_json: png.toString('base64'), media_type: 'image/png' }] }),
+          } as unknown as Response;
+        }
+        // Text calls fail over to the local generator.
+        return { ok: false, status: 503, text: async () => 'busy' } as unknown as Response;
+      }),
+    );
+
+    const { socket: host, code } = await joinedRoom('Ada');
+    const level = await reachLevel(host, TOPICS);
+    await emit<ActionResult>(host, 'game:end');
+    const painted = await nextState(host, (state) => state.battleArt.status === 'done');
+
+    expect(JSON.stringify(painted)).not.toContain(png.toString('base64'));
+    expect(painted.battleArt.url).toMatch(new RegExp(`^/battle/${code}/`));
+    const prompt = prompts.at(-1)!;
+    expect(prompt).toContain(level.you.character!.characterName);
+    expect(prompt).toContain(level.level!.enemies[0]!.name);
+    expect(prompt).toMatch(/no text/i);
+
+    vi.unstubAllGlobals();
+    const served = await fetch(`${url}${painted.battleArt.url}`);
+    expect(Buffer.from(await served.arrayBuffer()).equals(png)).toBe(true);
+    const download = await fetch(`${url}${painted.battleArt.url}?download=1`);
+    expect(download.headers.get('content-disposition')).toContain(`retro-raiders-${code}-battle.png`);
+
+    // Only the facilitator may spend another painting.
+    const guest = await connect();
+    await emit<JoinResult>(guest, 'room:join', { name: 'Grace', code });
+    expect((await emit<ActionResult>(guest, 'art:paint')).ok).toBe(false);
+  });
+});

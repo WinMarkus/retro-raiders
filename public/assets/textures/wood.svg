@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200">
+<defs><filter id="w" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.004 0.09" numOctaves="3" seed="4" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 0.02  0 0 0 0 0.015  0 0 0 0 0.01  1.3 0 0 0 -0.45"/></filter>
+<filter id="g" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" seed="96" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 0 0 0 -0.45"/></filter></defs>
+<rect width="400" height="200" fill="#241b14"/>
+<rect width="400" height="200" filter="url(#w)" opacity=".85"/>
+<rect width="400" height="200" filter="url(#g)" opacity=".35"/>
+<g stroke="#0c0806" stroke-opacity=".8" stroke-width="2"><line x1="0" y1="1" x2="400" y2="1"/><line x1="0" y1="67" x2="400" y2="67"/><line x1="0" y1="134" x2="400" y2="134"/></g>
+<g stroke="#5a4431" stroke-opacity=".25" stroke-width="1"><line x1="0" y1="3" x2="400" y2="3"/><line x1="0" y1="69" x2="400" y2="69"/><line x1="0" y1="136" x2="400" y2="136"/></g>
+</svg>

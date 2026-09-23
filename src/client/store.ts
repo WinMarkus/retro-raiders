@@ -18,6 +18,9 @@ export interface ClientSocket {
 }
 
 const SESSION_KEY = 'retro-raiders-session';
+const STATE_KEY = 'retro-raiders-state';
+/** Render's free tier sleeps after 15 idle minutes; an open room keeps it up. */
+const KEEPALIVE_MS = 4 * 60_000;
 
 export interface Session {
   code: string;
@@ -46,8 +49,27 @@ export function saveSession(session: Session): void {
 export function clearSession(): void {
   try {
     sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem(STATE_KEY);
   } catch {
     /* ignore */
+  }
+}
+
+/** The last room copy, kept so a restarted server can be handed the room back. */
+function saveStateCopy(state: GameState): void {
+  try {
+    sessionStorage.setItem(STATE_KEY, JSON.stringify(state));
+  } catch {
+    /* full or private mode: the in-memory copy still covers a reconnect */
+  }
+}
+
+function loadStateCopy(): GameState | null {
+  try {
+    const raw = sessionStorage.getItem(STATE_KEY);
+    return raw ? (JSON.parse(raw) as GameState) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -57,6 +79,8 @@ export const store = {
   state: null as GameState | null,
   connected: false,
   joinError: null as string | null,
+  /** serverTime - Date.now(), so countdowns survive a laptop with a wrong clock. */
+  clockOffset: 0,
   /** Positions of other players, patched by the lightweight move broadcast. */
   positions: new Map<string, Point>(),
 };
@@ -81,6 +105,7 @@ function call<T>(event: string, payload?: unknown): Promise<T> {
 export function act(event: string, payload?: unknown): Promise<ActionResult> {
   return call<ActionResult>(event, payload).then((result) => {
     if (result && result.ok === false) toast(result.error);
+    else if (result?.message) toast(result.message);
     return result;
   });
 }
@@ -134,6 +159,25 @@ export async function downloadSnapshot(): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+export function serverNow(): number {
+  return Date.now() + store.clockOffset;
+}
+
+export function inviteLink(code: string): string {
+  return `${window.location.origin}/?room=${encodeURIComponent(code)}`;
+}
+
+export async function copyInvite(code: string): Promise<void> {
+  const link = inviteLink(code);
+  try {
+    await navigator.clipboard.writeText(link);
+    toast('Invite link copied — paste it into the call chat.');
+  } catch {
+    // Clipboard needs a secure context or permission; show it instead.
+    window.prompt('Copy this invite link:', link);
+  }
+}
+
 export function toast(message: string): void {
   const host = document.getElementById('toasts');
   if (!host) return;
@@ -150,11 +194,13 @@ export function attachSocketLifecycle(): void {
     store.connected = true;
     const session = loadSession();
     if (session) {
-      socket.emit('room:rejoin', session, (result: unknown) => {
+      const copy = store.state?.code === session.code ? store.state : loadStateCopy();
+      socket.emit('room:rejoin', { ...session, state: copy?.code === session.code ? copy : null }, (result: unknown) => {
         const join = result as JoinResult;
         if (!join.ok) {
           clearSession();
           store.state = null;
+          store.joinError = 'Your session in that room ended. Join again with the same name to get your seat back.';
         }
         notify();
       });
@@ -169,7 +215,9 @@ export function attachSocketLifecycle(): void {
 
   socket.on('state', ((state: GameState) => {
     store.state = state;
+    store.clockOffset = state.serverTime - Date.now();
     for (const player of state.players) store.positions.set(player.id, player.position);
+    saveStateCopy(state);
     notify();
   }) as (...args: never[]) => void);
 
@@ -181,6 +229,11 @@ export function attachSocketLifecycle(): void {
   socket.on('notice', ((notice: { message: string }) => {
     toast(notice.message);
   }) as (...args: never[]) => void);
+
+  window.setInterval(() => {
+    if (!store.state) return;
+    void fetch('/health', { cache: 'no-store' }).catch(() => undefined);
+  }, KEEPALIVE_MS);
 }
 
 export function leave(): void {

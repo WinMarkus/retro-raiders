@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { Server, Socket } from 'socket.io';
-import { LIMITS } from '../shared/constants.js';
+import { LIMITS, TIMER_PRESETS } from '../shared/constants.js';
 import type {
   ActionResult,
   DownloadResult,
+  Enemy,
   JoinResult,
   MoveBroadcast,
+  Proposal,
   SaveResult,
   Topic,
 } from '../shared/types.js';
@@ -18,12 +20,15 @@ import {
   collectNearbyPowerUps,
   everyoneReady,
   findEnemy,
+  forceEncounter,
   lockOn,
   resolveEnemy,
 } from './game.js';
-import { generateCharacters, generateLevel } from './generate.js';
+import { fallbackLevel, generateCharacters, generateLevel } from './generate.js';
 import { commitFile, readGithubConfig } from './github.js';
+import { generateIdeas, refineIdea } from './ideas.js';
 import {
+  type OpenRouterConfig,
   isAllowedOpenRouterModel,
   readOpenRouterConfig,
   readOpenRouterImageConfig,
@@ -33,6 +38,8 @@ import {
 import { RATE_LIMITS, rateLimit } from './ratelimit.js';
 import { buildCommitMessage, buildSavePath, buildSnapshot } from './snapshot.js';
 import { isFacilitator, restartCampaign, topicsOf, type PlayerRecord, type Room, type RoomStore } from './state.js';
+import { paintBattle } from './art.js';
+import { applyPrivateState, applyPublicState, restoredVersion } from './restore.js';
 import { generateEncounterStory, generateVictoryStory } from './stories.js';
 import { SAVE_PLAYER_NAME, buildState, canRestartCampaign } from './view.js';
 import {
@@ -41,6 +48,7 @@ import {
   isValidPlayerName,
   normalizeRoomCode,
   sanitizeSingleLine,
+  sanitizeText,
   validateCheckIn,
   validateTopic,
   validateTreatment,
@@ -61,10 +69,41 @@ function fail(ack: Ack<ActionResult>, error: string): void {
   reply(ack, { ok: false, error });
 }
 
+const pending = new Map<Room, NodeJS.Timeout>();
+const lastSent = new WeakMap<Room, Map<string, string>>();
+
+/**
+ * Bursts of actions (seven people forging at once) collapse into one push per
+ * room, and a player whose view did not change gets nothing at all. Every push
+ * used to rebuild every browser's screen, so this is also what keeps typing
+ * from being interrupted.
+ */
 export function pushState(io: Server, room: Room): void {
+  if (pending.has(room)) return;
+  const timer = setTimeout(() => {
+    pending.delete(room);
+    flushState(io, room);
+  }, 25);
+  timer.unref?.();
+  pending.set(room, timer);
+}
+
+function flushState(io: Server, room: Room): void {
+  let sent = lastSent.get(room);
+  if (!sent) {
+    sent = new Map();
+    lastSent.set(room, sent);
+  }
+  room.version += 1;
   for (const player of room.players.values()) {
     if (!player.connected || !player.socketId) continue;
-    io.to(player.socketId).emit('state', buildState(room, player.id));
+    const state = buildState(room, player.id);
+    // Compare without the fields that change on every flush by design.
+    const signature = JSON.stringify({ ...state, version: 0, serverTime: 0 });
+    const key = `${player.id}:${player.socketId}`;
+    if (sent.get(key) === signature) continue;
+    sent.set(key, signature);
+    io.to(player.socketId).emit('state', state);
   }
 }
 
@@ -74,6 +113,27 @@ function toast(io: Server, room: Room, message: string): void {
 
 export function registerSocketHandlers(io: Server, store: RoomStore): void {
   io.on('connection', (socket: Socket) => {
+    /**
+     * One bad payload or a bug in one handler used to take the whole process
+     * down, and every room with it. Errors now stay inside the event.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const on = (event: string, handler: (payload: unknown, ack: any) => unknown): void => {
+      socket.on(event, (payload: unknown, ack: unknown) => {
+        const safeAck = typeof ack === 'function' ? (ack as Ack<ActionResult>) : undefined;
+        const report = (error: unknown): void => {
+          console.error(`[socket] ${event} failed:`, error);
+          reply(safeAck, { ok: false, error: 'Something went wrong on the server. Try again.' });
+        };
+        try {
+          const result = handler(payload, safeAck);
+          if (result instanceof Promise) result.catch(report);
+        } catch (error) {
+          report(error);
+        }
+      });
+    };
+
     const membership = (): Membership | null => {
       const code = socket.data.roomCode as string | undefined;
       const playerId = socket.data.playerId as string | undefined;
@@ -131,9 +191,52 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       delete socket.data.playerId;
     };
 
+    /** Swaps the local fight intro for a short AI one when it arrives in time. */
+    const narrate = async (room: Room): Promise<void> => {
+      const encounter = room.encounter;
+      const enemy = encounter ? findEnemy(room, encounter.enemyId) : undefined;
+      if (!encounter || !enemy) return;
+      const story = await generateEncounterStory(room, enemy, readOpenRouterStoryConfig());
+      if (room.encounter !== encounter) return;
+      encounter.story = story;
+      pushState(io, room);
+      toast(io, room, story);
+    };
+
+    /**
+     * Paints the victory scene. Runs in the background: the report is usable
+     * straight away and the painting slides in when it is ready (~30-90 s).
+     */
+    const paint = async (room: Room): Promise<ActionResult> => {
+      const config = readOpenRouterImageConfig();
+      if (!config) return { ok: false, error: 'Set OPENROUTER_IMAGE_MODEL on the server to paint the battle.' };
+      if (room.battleArt.status === 'painting') return { ok: false, error: 'The painters are already at work.' };
+      const rule = RATE_LIMITS.art;
+      if (!rateLimit(`${room.code}:art`, rule.limit, rule.windowMs)) {
+        return { ok: false, error: 'The painters need a break. Try again in a few minutes.' };
+      }
+      const campaign = room.createdAt;
+      const previous = room.battleArt.image;
+      room.battleArt = { status: 'painting', image: previous, prompt: null, message: 'The court painters are at work…' };
+      pushState(io, room);
+      const result = await paintBattle(room, config);
+      if (room.createdAt !== campaign) return { ok: false, error: 'The campaign was restarted.' };
+      room.battleArt = result.ok
+        ? {
+            status: 'done',
+            image: { dataUrl: result.dataUrl, mediaType: result.mediaType, model: config.model },
+            prompt: result.prompt,
+            message: null,
+          }
+        : { status: 'error', image: previous, prompt: result.prompt, message: result.error };
+      pushState(io, room);
+      if (result.ok) toast(io, room, 'The battle has been painted. Scroll up on the victory report.');
+      return result.ok ? { ok: true } : { ok: false, error: result.error };
+    };
+
     /* -------------------------------------------------------- joining -- */
 
-    socket.on('room:create', (payload: unknown, ack: Ack<JoinResult>) => {
+    on('room:create', (payload: unknown, ack: Ack<JoinResult>) => {
       const rule = RATE_LIMITS.join;
       if (!rateLimit(`${socket.id}:join`, rule.limit, rule.windowMs)) {
         reply(ack, { ok: false, error: 'Too many attempts. Wait a minute and try again.' });
@@ -156,7 +259,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, room);
     });
 
-    socket.on('room:create:fresh', (_payload: unknown, ack: Ack<JoinResult>) => {
+    on('room:create:fresh', (_payload: unknown, ack: Ack<JoinResult>) => {
       const found = membership();
       if (!found) return reply(ack, { ok: false, error: 'You are not in this room any more.' });
       if (!canRestartCampaign(found.player.name)) {
@@ -178,7 +281,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, room);
     });
 
-    socket.on('room:join', (payload: unknown, ack: Ack<JoinResult>) => {
+    on('room:join', (payload: unknown, ack: Ack<JoinResult>) => {
       const rule = RATE_LIMITS.join;
       if (!rateLimit(`${socket.id}:join`, rule.limit, rule.windowMs)) {
         reply(ack, { ok: false, error: 'Too many attempts. Wait a minute and try again.' });
@@ -213,20 +316,41 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, room);
     });
 
-    socket.on('room:rejoin', (payload: unknown, ack: Ack<JoinResult>) => {
-      const data = (payload ?? {}) as { code?: unknown; playerId?: unknown };
+    /**
+     * Reconnecting browsers send their last copy of the room along. Normally it
+     * is ignored; after a server restart it is how the room comes back.
+     */
+    on('room:rejoin', (payload: unknown, ack: Ack<JoinResult>) => {
+      const data = (payload ?? {}) as { code?: unknown; playerId?: unknown; state?: unknown };
       const code = normalizeRoomCode(data.code);
       const playerId = typeof data.playerId === 'string' ? data.playerId : '';
-      const room = store.get(code);
-      if (!room || !playerId) {
-        reply(ack, { ok: false, error: 'That session has expired. Join again with your name.' });
-        return;
+      const copy = typeof data.state === 'object' && data.state !== null ? data.state : null;
+      const expired = (reason: 'room-missing' | 'player-missing'): void =>
+        reply(ack, { ok: false, error: 'That session has expired. Join again with your name.', reason });
+
+      let room = store.get(code);
+      if (!room && copy && code.length === LIMITS.roomCode && isId(playerId)) {
+        const rule = RATE_LIMITS.join;
+        if (!rateLimit(`${socket.id}:join`, rule.limit, rule.windowMs)) return expired('room-missing');
+        room = store.createWithCode(code) ?? undefined;
+        if (room) {
+          room.restored = true;
+          applyPublicState(room, copy);
+          if (room.players.size === 0) {
+            store.delete(code);
+            room = undefined;
+          } else {
+            console.log(`[restore] room ${code} rebuilt from a client copy (version ${room.version}).`);
+          }
+        }
+      } else if (room?.restored && copy && restoredVersion(copy) > room.version) {
+        applyPublicState(room, copy);
       }
+      if (!room || !playerId) return expired('room-missing');
+
       const player = store.reattach(room, playerId, socket.id);
-      if (!player) {
-        reply(ack, { ok: false, error: 'That session has expired. Join again with your name.' });
-        return;
-      }
+      if (!player) return expired('player-missing');
+      if (room.restored && copy) applyPrivateState(room, player, copy);
       attach(room, player);
       reply(ack, { ok: true, code: room.code, playerId: player.id });
       pushState(io, room);
@@ -234,7 +358,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
 
     /* ------------------------------------------------ character forge -- */
 
-    socket.on('checkin:set', (payload: unknown, ack: Ack<ActionResult>) => {
+    on('checkin:set', (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (limited('text', ack)) return;
@@ -247,42 +371,48 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('character:forge', async (payload: unknown, ack: Ack<ActionResult>) => {
+    on('character:forge', async (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
-      if (found.room.phase !== 'forge') return fail(ack, 'The forge is closed.');
-      if (!found.player.checkIn) return fail(ack, 'Fill in your check-in first.');
+      const { room, player } = found;
+      if (room.phase !== 'forge') return fail(ack, 'The forge is closed.');
+      if (!player.checkIn) return fail(ack, 'Fill in your check-in first.');
+      if (player.forging) return fail(ack, 'Your hero is already on the anvil.');
 
-      const rule = RATE_LIMITS.ai;
-      if (!rateLimit(`${found.room.code}:ai`, rule.limit, rule.windowMs)) {
-        return fail(ack, 'The forge is overheating. Wait a few minutes before generating again.');
+      // Per player, not per room: seven people forging at once is the normal case.
+      const rule = RATE_LIMITS.forge;
+      if (!rateLimit(`${room.code}:${player.id}:forge`, rule.limit, rule.windowMs)) {
+        return fail(ack, 'The forge is overheating. Wait a few minutes before re-forging.');
       }
 
-      const config = readOpenRouterConfig(process.env, found.room.aiTextModel).config ?? null;
+      const config = readOpenRouterConfig(process.env, room.aiTextModel).config ?? null;
       const withAvatarImage = (payload as { withAvatarImage?: unknown } | null)?.withAvatarImage === true;
       const imageConfig = withAvatarImage ? readOpenRouterImageConfig() : null;
-      found.room.generation = {
-        busy: true,
-        message: imageConfig
-          ? `Forging ${found.player.name}'s hero and painting the portrait…`
-          : `Forging ${found.player.name}'s hero…`,
-      };
-      pushState(io, found.room);
+      const campaign = room.createdAt;
+      player.forging = true;
+      pushState(io, room);
 
-      const { characters, note } = await generateCharacters(
-        [{ playerName: found.player.name, checkIn: found.player.checkIn }],
-        config,
-        undefined,
-        imageConfig,
-      );
-      found.player.character = characters[0] ?? null;
-      found.player.ready = true;
-      found.room.generation = { busy: false, message: note };
-      reply(ack, { ok: true });
-      pushState(io, found.room);
+      try {
+        const { characters, note } = await generateCharacters(
+          [{ playerName: player.name, checkIn: player.checkIn }],
+          config,
+          undefined,
+          imageConfig,
+        );
+        // The campaign may have been restarted while the AI was thinking.
+        if (room.createdAt !== campaign || room.phase !== 'forge' || !room.players.has(player.id)) {
+          return fail(ack, 'The forge was reset while your hero was being made.');
+        }
+        player.character = characters[0] ?? null;
+        player.ready = true;
+        reply(ack, note ? { ok: true, message: `Forged locally: ${note}` } : { ok: true });
+      } finally {
+        player.forging = false;
+        pushState(io, room);
+      }
     });
 
-    socket.on('ai:model:set', (payload: unknown, ack: Ack<ActionResult>) => {
+    on('ai:model:set', (payload: unknown, ack: Ack<ActionResult>) => {
       const found = facilitatorOnly(ack);
       if (!found) return;
       if (found.room.generation.busy) return fail(ack, 'Wait until the current generation is finished.');
@@ -306,7 +436,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
 
     /* ---------------------------------------------------- topic forge -- */
 
-    socket.on('topic:add', (payload: unknown, ack: Ack<ActionResult>) => {
+    on('topic:add', (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (limited('text', ack)) return;
@@ -325,7 +455,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('topic:remove', (payload: unknown, ack: Ack<ActionResult>) => {
+    on('topic:remove', (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       const topicId = (payload as { topicId?: unknown })?.topicId;
@@ -339,7 +469,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('ready:set', (payload: unknown, ack: Ack<ActionResult>) => {
+    on('ready:set', (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       found.player.ready = Boolean((payload as { ready?: unknown })?.ready);
@@ -349,7 +479,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
 
     /* ------------------------------------------------ phase switching -- */
 
-    socket.on('phase:topics', (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('phase:topics', (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = facilitatorOnly(ack);
       if (!found) return;
       if (found.room.phase !== 'forge') return fail(ack, 'The party is past the forge already.');
@@ -361,7 +491,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('phase:back', (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('phase:back', (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = facilitatorOnly(ack);
       if (!found) return;
       const room = found.room;
@@ -373,7 +503,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, room);
     });
 
-    socket.on('level:generate', async (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('level:generate', async (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = facilitatorOnly(ack);
       if (!found) return;
       const room = found.room;
@@ -393,7 +523,15 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, room);
 
       const config = readOpenRouterConfig(process.env, room.aiTextModel).config ?? null;
-      const level = await generateLevel(allTopics(room), config);
+      const campaign = room.createdAt;
+      let level;
+      try {
+        level = await generateLevel(allTopics(room), config);
+      } catch (error) {
+        console.error('[level] generation crashed, using the local generator:', error);
+        level = fallbackLevel(allTopics(room), 'The AI generator failed, so the dungeon was built locally.');
+      }
+      if (room.createdAt !== campaign || room.phase !== 'generating') return;
 
       room.level = level;
       room.encounter = null;
@@ -401,22 +539,57 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       room.attackCollected = 0;
       room.attackSpent = 0;
       for (const player of room.players.values()) player.lockedEnemyId = null;
+      room.battleArt = { status: 'idle', image: null, prompt: null, message: null };
+      clearReady(room);
       room.generation = { busy: false, message: level.note };
       room.phase = 'level';
       pushState(io, room);
       toast(io, room, level.source === 'ai' ? 'The dungeon has been generated.' : 'Dungeon built by the local generator.');
     });
 
-    socket.on('game:end', (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('timer:set', (payload: unknown, ack: Ack<ActionResult>) => {
+      const found = facilitatorOnly(ack);
+      if (!found) return;
+      const minutes = Number((payload as { minutes?: unknown })?.minutes);
+      if (minutes === 0) {
+        found.room.timer = null;
+      } else if (Number.isInteger(minutes) && minutes > 0 && minutes <= LIMITS.maxTimerMinutes) {
+        found.room.timer = { endsAt: Date.now() + minutes * 60_000, minutes, phase: found.room.phase };
+      } else {
+        return fail(ack, `Pick between 1 and ${LIMITS.maxTimerMinutes} minutes, e.g. ${TIMER_PRESETS.join(', ')}.`);
+      }
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+    });
+
+    on('encounter:extend', (_payload: unknown, ack: Ack<ActionResult>) => {
+      const found = facilitatorOnly(ack);
+      if (!found) return;
+      if (!found.room.encounter) return fail(ack, 'There is no fight running.');
+      found.room.encounter.ideasUntil = Math.max(found.room.encounter.ideasUntil, Date.now()) + 60_000;
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+    });
+
+    on('game:end', async (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = facilitatorOnly(ack);
       if (!found) return;
       found.room.encounter = null;
       found.room.phase = 'victory';
       reply(ack, { ok: true });
       pushState(io, found.room);
+      // Paint once per raid; going back and ending again keeps the painting.
+      if (found.room.battleArt.status === 'idle' && readOpenRouterImageConfig()) await paint(found.room);
     });
 
-    socket.on('campaign:restart', (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('art:paint', async (_payload: unknown, ack: Ack<ActionResult>) => {
+      const found = facilitatorOnly(ack);
+      if (!found) return;
+      if (found.room.phase !== 'victory') return fail(ack, 'The battle is painted on the victory report.');
+      reply(ack, await paint(found.room));
+    });
+
+    on('campaign:restart', (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (!canRestartCampaign(found.player.name)) {
@@ -430,7 +603,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
 
     /* ------------------------------------------------------- the level -- */
 
-    socket.on('player:move', (payload: unknown) => {
+    on('player:move', (payload: unknown) => {
       const found = membership();
       if (!found) return;
       if (found.room.phase !== 'level' || found.room.encounter) return;
@@ -457,7 +630,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       }
     });
 
-    socket.on('enemy:lock', async (payload: unknown, ack: Ack<ActionResult>) => {
+    on('enemy:lock', async (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (limited('action', ack)) return;
@@ -469,22 +642,163 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       if (!outcome.ok) return fail(ack, outcome.error);
       reply(ack, { ok: true });
       pushState(io, found.room);
-      if (outcome.opened) {
-        const enemy = findEnemy(found.room, enemyId);
-        if (enemy && found.room.encounter) {
-          const openedAt = found.room.encounter.openedAt;
-          const story = await generateEncounterStory(found.room, enemy, readOpenRouterStoryConfig());
-          if (found.room.encounter?.enemyId !== enemy.id || found.room.encounter.openedAt !== openedAt) return;
-          found.room.encounter.story = story;
-          pushState(io, found.room);
-          toast(io, found.room, story);
-        } else {
-          toast(io, found.room, 'The party engages the enemy.');
-        }
-      }
+      if (outcome.opened) await narrate(found.room);
     });
 
-    socket.on('enemy:unlock', (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('encounter:start', async (_payload: unknown, ack: Ack<ActionResult>) => {
+      const found = facilitatorOnly(ack);
+      if (!found) return;
+      if (found.room.phase !== 'level') return fail(ack, 'There is no dungeon to fight in.');
+      const outcome = forceEncounter(found.room, found.player);
+      if (!outcome.ok) return fail(ack, outcome.error);
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+      await narrate(found.room);
+    });
+
+    /* ------------------------------------------------------ idea board -- */
+
+    /** Checks that a fight is running and hands back its enemy. */
+    const inFight = (ack: Ack<ActionResult>): (Membership & { enemy: Enemy }) | null => {
+      const found = membership();
+      if (!found) {
+        fail(ack, 'You are not in this room any more.');
+        return null;
+      }
+      const enemy = found.room.encounter ? findEnemy(found.room, found.room.encounter.enemyId) : undefined;
+      if (!found.room.encounter || !enemy) {
+        fail(ack, 'There is no fight running.');
+        return null;
+      }
+      return { ...found, enemy };
+    };
+
+    const newProposal = (text: string, source: Proposal['source']): Proposal => ({
+      id: `idea-${randomUUID().slice(0, 12)}`,
+      text,
+      source,
+      createdAt: Date.now(),
+    });
+
+    on('proposal:submit', (payload: unknown, ack: Ack<ActionResult>) => {
+      const found = inFight(ack);
+      if (!found) return;
+      if (limited('text', ack)) return;
+      const encounter = found.room.encounter!;
+      const text = sanitizeText((payload as { text?: unknown })?.text, LIMITS.proposalText).replace(/\s+/g, ' ');
+      if (text.length < 5) return fail(ack, 'Write a few words for your idea.');
+
+      // One idea per person: sending again edits it instead of adding another.
+      const own = encounter.proposals.find((proposal) => found.room.proposalAuthors.get(proposal.id) === found.player.id);
+      if (own) {
+        own.text = text;
+      } else {
+        if (encounter.proposals.length >= LIMITS.maxProposals) return fail(ack, 'The idea board is full. Merge or kick some first.');
+        const proposal = newProposal(text, 'player');
+        encounter.proposals.push(proposal);
+        found.room.proposalAuthors.set(proposal.id, found.player.id);
+      }
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+    });
+
+    on('proposal:remove', (payload: unknown, ack: Ack<ActionResult>) => {
+      const found = inFight(ack);
+      if (!found) return;
+      const proposalId = (payload as { proposalId?: unknown })?.proposalId;
+      if (!isId(proposalId)) return fail(ack, 'Unknown idea.');
+      const own = found.room.proposalAuthors.get(proposalId) === found.player.id;
+      if (!own && !isFacilitator(found.room, found.player.id)) return fail(ack, 'Only the facilitator can kick ideas.');
+      const encounter = found.room.encounter!;
+      encounter.proposals = encounter.proposals.filter((proposal) => proposal.id !== proposalId);
+      found.room.proposalAuthors.delete(proposalId);
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+    });
+
+    on('proposal:merge', (payload: unknown, ack: Ack<ActionResult>) => {
+      const found = inFight(ack);
+      if (!found) return;
+      if (!isFacilitator(found.room, found.player.id)) return fail(ack, 'Only the facilitator can merge ideas.');
+      const data = (payload ?? {}) as { proposalIds?: unknown; text?: unknown };
+      const ids = Array.isArray(data.proposalIds) ? data.proposalIds.filter(isId) : [];
+      const encounter = found.room.encounter!;
+      const picked = encounter.proposals.filter((proposal) => ids.includes(proposal.id));
+      if (picked.length < 2) return fail(ack, 'Pick at least two ideas to merge.');
+      const text = sanitizeText(data.text, LIMITS.proposalText).replace(/\s+/g, ' ');
+      if (text.length < 5) return fail(ack, 'Write the merged idea first.');
+
+      const merged = newProposal(text, 'merged');
+      const at = encounter.proposals.indexOf(picked[0]!);
+      encounter.proposals = encounter.proposals.filter((proposal) => !picked.includes(proposal));
+      encounter.proposals.splice(Math.min(at, encounter.proposals.length), 0, merged);
+      for (const proposal of picked) found.room.proposalAuthors.delete(proposal.id);
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+    });
+
+    /** Runs one oracle call with the busy flag, the rate limit and the stale-fight check. */
+    const consultOracle = async (
+      found: Membership & { enemy: Enemy },
+      ack: Ack<ActionResult>,
+      work: (config: OpenRouterConfig | null) => Promise<Proposal[]>,
+    ): Promise<void> => {
+      const room = found.room;
+      const encounter = room.encounter!;
+      if (encounter.oracleBusy) return fail(ack, 'The oracle is already thinking.');
+      if (encounter.proposals.length >= LIMITS.maxProposals) {
+        return fail(ack, 'The idea board is full. Merge or kick some first.');
+      }
+      const rule = RATE_LIMITS.ideas;
+      if (!rateLimit(`${room.code}:ideas`, rule.limit, rule.windowMs)) {
+        return fail(ack, 'The oracle needs a breather. Try again in a few minutes.');
+      }
+      encounter.oracleBusy = true;
+      pushState(io, room);
+      try {
+        const config = readOpenRouterConfig(process.env, room.aiTextModel).config ?? null;
+        const before = encounter.proposals.length;
+        const offered = await work(config);
+        if (room.encounter !== encounter) return fail(ack, 'That fight is over.');
+        const kept = encounter.proposals.length - before;
+        return reply(ack, kept < offered.length ? { ok: true, message: 'The board filled up; some ideas were left out.' } : { ok: true });
+      } finally {
+        encounter.oracleBusy = false;
+        pushState(io, room);
+      }
+    };
+
+    on('proposal:generate', async (_payload: unknown, ack: Ack<ActionResult>) => {
+      const found = inFight(ack);
+      if (!found) return;
+      await consultOracle(found, ack, async (config) => {
+        const encounter = found.room.encounter!;
+        const { ideas } = await generateIdeas(found.enemy, encounter.proposals.map((proposal) => proposal.text), config);
+        if (found.room.encounter !== encounter) return [];
+        const added = ideas.map((idea) => newProposal(idea, 'oracle'));
+        encounter.proposals.push(...added.slice(0, Math.max(0, LIMITS.maxProposals - encounter.proposals.length)));
+        return added;
+      });
+    });
+
+    on('proposal:refine', async (payload: unknown, ack: Ack<ActionResult>) => {
+      const found = inFight(ack);
+      if (!found) return;
+      const proposalId = (payload as { proposalId?: unknown })?.proposalId;
+      const original = found.room.encounter!.proposals.find((proposal) => proposal.id === proposalId);
+      if (!original) return fail(ack, 'That idea is gone.');
+      await consultOracle(found, ack, async (config) => {
+        const encounter = found.room.encounter!;
+        const text = await refineIdea(found.enemy, original.text, config);
+        if (found.room.encounter !== encounter || encounter.proposals.length >= LIMITS.maxProposals) return [];
+        const refined = newProposal(text, 'refined');
+        const at = encounter.proposals.indexOf(original);
+        encounter.proposals.splice(at < 0 ? encounter.proposals.length : at + 1, 0, refined);
+        return [refined];
+      });
+    });
+
+    on('enemy:unlock', (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       clearLock(found.room, found.player);
@@ -492,7 +806,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('encounter:abandon', (_payload: unknown, ack: Ack<ActionResult>) => {
+    on('encounter:abandon', (_payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (!found.room.encounter) return fail(ack, 'There is no fight running.');
@@ -501,7 +815,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
-    socket.on('encounter:resolve', async (payload: unknown, ack: Ack<ActionResult>) => {
+    on('encounter:resolve', async (payload: unknown, ack: Ack<ActionResult>) => {
       const found = membership();
       if (!found) return fail(ack, 'You are not in this room any more.');
       if (limited('text', ack)) return;
@@ -526,7 +840,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
 
     /* ----------------------------------------------------------- save -- */
 
-    socket.on('save:github', async (_payload: unknown, ack: Ack<SaveResult>) => {
+    on('save:github', async (_payload: unknown, ack: Ack<SaveResult>) => {
       const found = membership();
       if (!found) {
         reply(ack, { ok: false, error: 'You are not in this room any more.' });
@@ -583,7 +897,7 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       reply(ack, { ok: true, url: result.url, path });
     });
 
-    socket.on('save:download', (_payload: unknown, ack: Ack<DownloadResult>) => {
+    on('save:download', (_payload: unknown, ack: Ack<DownloadResult>) => {
       const found = membership();
       if (!found) {
         reply(ack, { ok: false, error: 'You are not in this room any more.' });

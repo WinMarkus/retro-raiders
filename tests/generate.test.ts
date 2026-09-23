@@ -94,6 +94,19 @@ describe('topic clustering', () => {
 });
 
 describe('fallback level', () => {
+  it('never fields the same monster twice: matching clusters become one stronger enemy', () => {
+    const topics = [
+      'Code reviews wait for days', 'PR reviews take too long', 'Flaky e2e tests block deploys',
+      'Deploy pipeline is slow', 'Too many meetings, no focus time', 'Standups run long',
+      'Context switching between projects', 'Unclear requirements for search', 'Nobody owns the legacy importer',
+    ].map((title, index): Topic => ({ id: `t${index}`, type: 'bad', title, description: '', intensity: 3 }));
+    const level = fallbackLevel(topics);
+    const names = level.enemies.map((enemy) => enemy.name);
+    expect(new Set(names).size).toBe(names.length);
+    const sources = level.enemies.flatMap((enemy) => enemy.sourceTopics);
+    expect(sources).toHaveLength(topics.length);
+  });
+
   it('turns bad and sad topics into enemies and good ones into power-ups', () => {
     const topics = [
       topic({ title: 'Review takes too long', intensity: 5 }),
@@ -418,5 +431,27 @@ describe('characters', () => {
     expect(result.characters[0]!.avatarImage?.dataUrl).toBe('data:image/png;base64,iVBORw0KGgo=');
     expect(result.characters[0]!.avatarImage?.model).toBe('openai/gpt-image-2');
     expect(result.characters[0]!.avatarImage?.cost).toBe(0.006);
+  });
+});
+
+describe('the battle painting prompt', () => {
+  it('describes the real party and monsters in a realistic style, without cartoon hints', async () => {
+    const { buildBattlePrompt } = await import('../src/server/art.js');
+    const { RoomStore } = await import('../src/server/state.js');
+    const store = new RoomStore();
+    const room = store.create();
+    const joined = store.addPlayer(room, 'Ada', 'socket-1');
+    if (!joined.ok) throw new Error('join failed');
+    joined.player.character = fallbackCharacter('Ada', { energy: 4, pressure: 2, satisfaction: 4, mood: 'good sprint', keywords: [] });
+    room.level = fallbackLevel([
+      { id: 't1', type: 'bad', title: 'Code reviews wait for days', description: '', intensity: 4 },
+      { id: 't2', type: 'bad', title: 'Legacy importer is scary', description: '', intensity: 3 },
+    ]);
+    room.level.enemies[0]!.status = 'resolved';
+    const prompt = buildBattlePrompt(room);
+    expect(prompt).toContain(joined.player.character.characterName);
+    for (const enemy of room.level.enemies) expect(prompt).toContain(enemy.name);
+    expect(prompt).not.toMatch(/pixel|tiny|\.\./i);
+    expect(prompt).not.toMatch(/\ba [AEIOU]/);
   });
 });

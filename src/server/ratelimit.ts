@@ -35,6 +35,12 @@ export const RATE_LIMITS = {
   text: { limit: 240, windowMs: 60_000 },
   action: { limit: 300, windowMs: 60_000 },
   save: { limit: 5, windowMs: 60_000 },
-  /** AI calls cost money and take seconds — per room, not per socket. */
+  /** Dungeon generation costs money and takes seconds — per room. */
   ai: { limit: 6, windowMs: 10 * 60_000 },
+  /** Character forging — per player, so a full party can forge at once. */
+  forge: { limit: 5, windowMs: 10 * 60_000 },
+  /** Oracle ideas during fights — per room; a retro has maybe eight fights. */
+  ideas: { limit: 20, windowMs: 10 * 60_000 },
+  /** The victory painting is the priciest call in the game — per room. */
+  art: { limit: 4, windowMs: 30 * 60_000 },
 } as const;

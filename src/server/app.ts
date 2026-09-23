@@ -38,6 +38,37 @@ export function createGameServer(): CreatedServer {
     });
   });
 
+  app.get('/avatar/:code/:playerId/:tag', (req, res) => {
+    const room = store.get(req.params.code.toUpperCase());
+    const image = room?.players.get(req.params.playerId)?.character?.avatarImage;
+    const match = image?.dataUrl.match(/^data:([\w/+.-]+);base64,(.+)$/);
+    if (!match) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    res.setHeader('Content-Type', match[1]!);
+    // The URL carries a content hash, so a new portrait gets a new URL.
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(Buffer.from(match[2]!, 'base64'));
+  });
+
+  app.get('/battle/:code/:tag', (req, res) => {
+    const image = store.get(req.params.code.toUpperCase())?.battleArt.image;
+    const match = image?.dataUrl.match(/^data:([\w/+.-]+);base64,(.+)$/);
+    if (!match) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const extension = match[1]!.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'png';
+    res.setHeader('Content-Type', match[1]!);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    // ?download=1 turns the same URL into a file for Slack or the wiki.
+    if (req.query.download) {
+      res.setHeader('Content-Disposition', `attachment; filename="retro-raiders-${req.params.code.toUpperCase()}-battle.${extension}"`);
+    }
+    res.send(Buffer.from(match[2]!, 'base64'));
+  });
+
   app.use(express.static(publicDir, { extensions: ['html'], maxAge: '5m' }));
 
   app.get(/^\/room\/[A-Za-z0-9]{1,8}$/, (_req, res) => {

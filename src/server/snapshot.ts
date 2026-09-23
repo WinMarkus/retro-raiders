@@ -37,6 +37,8 @@ export interface RetroSnapshot {
   powerUps: PowerUp[];
   resolutions: Resolution[];
   attackPoints: { collected: number; spent: number; remaining: number };
+  /** What was painted and with which model; the image is downloaded separately. */
+  battleArt: { prompt: string; model: string } | null;
   summary: Summary;
 }
 
@@ -104,6 +106,10 @@ export function buildSnapshot(room: Room, now: Date, model: string | null = null
       spent: room.attackSpent,
       remaining: Math.max(0, room.attackCollected - room.attackSpent),
     },
+    battleArt:
+      room.battleArt.image && room.battleArt.prompt
+        ? { prompt: room.battleArt.prompt, model: room.battleArt.image.model }
+        : null,
     summary: buildSummary(room),
   };
 }

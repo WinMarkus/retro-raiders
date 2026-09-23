@@ -42,6 +42,21 @@ describe('joining', () => {
     if (!again.ok) expect(again.error).toBe('name-taken');
   });
 
+  it('hands an offline player their seat back when they join with the same name', () => {
+    const store = new RoomStore();
+    const room = store.create();
+    const first = store.addPlayer(room, 'Markus', 'socket-1');
+    store.markDisconnected('socket-1');
+    const again = store.addPlayer(room, 'markus', 'socket-2');
+    expect(again.ok).toBe(true);
+    if (again.ok && first.ok) {
+      expect(again.player.id).toBe(first.player.id);
+      expect(again.player.socketId).toBe('socket-2');
+      expect(again.player.connected).toBe(true);
+    }
+    expect(room.players.size).toBe(1);
+  });
+
   it('allows the same name in a different room', () => {
     const store = new RoomStore();
     const first = store.create();

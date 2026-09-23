@@ -45,6 +45,12 @@ export interface Character {
   source: 'ai' | 'fallback';
 }
 
+/**
+ * What travels to browsers: the portrait is a URL served over plain HTTP (and
+ * cached), never the multi-megabyte data URL that used to ride on every push.
+ */
+export type PublicCharacter = Omit<Character, 'avatarImage'> & { avatarUrl: string | null };
+
 export interface Topic {
   id: string;
   type: TopicType;
@@ -94,6 +100,8 @@ export interface Resolution {
   reviewBy: string;
   attackSpent: number;
   party: string[];
+  /** The other ideas the party put on the table for this enemy. */
+  alternatives?: string[];
   resolvedAt: number;
 }
 
@@ -104,9 +112,21 @@ export interface PublicPlayer {
   isFacilitator: boolean;
   ready: boolean;
   topicCount: number;
-  character: Character | null;
+  character: PublicCharacter | null;
+  /** True while this player's hero is being generated. */
+  forging: boolean;
   position: Point;
   lockedEnemyId: string | null;
+}
+
+export type ProposalSource = 'player' | 'oracle' | 'merged' | 'refined';
+
+/** One idea for beating the enemy. Who wrote it stays on the server. */
+export interface Proposal {
+  id: string;
+  text: string;
+  source: ProposalSource;
+  createdAt: number;
 }
 
 export interface EncounterState {
@@ -114,6 +134,28 @@ export interface EncounterState {
   openedAt: number;
   party: string[];
   story: string;
+  proposals: Proposal[];
+  /** Soft deadline for collecting ideas; nothing is blocked when it passes. */
+  ideasUntil: number;
+  /** True while the AI oracle is thinking up or refining ideas. */
+  oracleBusy: boolean;
+}
+
+/**
+ * The victory painting: one generated battle scene of the whole party. The
+ * image itself is served over HTTP; only its URL travels in the state.
+ */
+export interface BattleArt {
+  status: 'idle' | 'painting' | 'done' | 'error' | 'unavailable';
+  url: string | null;
+  message: string | null;
+}
+
+/** Facilitator-set soft timer for the current phase. Never enforced. */
+export interface PhaseTimer {
+  endsAt: number;
+  minutes: number;
+  phase: Phase;
 }
 
 export interface SaveState {
@@ -143,6 +185,10 @@ export interface AiModelOption {
 /** The per-player view of a room. Never contains authorship of a topic. */
 export interface GameState {
   code: string;
+  /** Changes on every campaign restart, so clients know to drop their drafts. */
+  campaignId: number;
+  /** Monotonic per room; lets a restarted server pick the freshest client copy. */
+  version: number;
   phase: Phase;
   you: {
     id: string;
@@ -150,7 +196,8 @@ export interface GameState {
     isFacilitator: boolean;
     ready: boolean;
     checkIn: CheckIn | null;
-    character: Character | null;
+    character: PublicCharacter | null;
+    forging: boolean;
     topics: Topic[];
     lockedEnemyId: string | null;
   };
@@ -162,8 +209,13 @@ export interface GameState {
     spent: number;
     collected: number;
   };
-  encounter: EncounterState | null;
+  encounter: (EncounterState & { mine: string | null }) | null;
   resolutions: Resolution[];
+  /** Every topic on the board, without authors. Only during the topic forge. */
+  board: Topic[];
+  timer: PhaseTimer | null;
+  /** Server clock at send time, so countdowns ignore a skewed laptop clock. */
+  serverTime: number;
   summary: Summary | null;
   save: SaveState;
   generation: {
@@ -176,6 +228,7 @@ export interface GameState {
     avatarImages: 'local-css' | 'openrouter-image';
     imageModel: string | null;
   };
+  battleArt: BattleArt;
   githubConfigured: boolean;
   canSave: boolean;
   canRestartCampaign: boolean;
@@ -184,9 +237,19 @@ export interface GameState {
 
 export type JoinResult =
   | { ok: true; code: string; playerId: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; reason?: 'room-missing' | 'player-missing' };
 
-export type ActionResult = { ok: true } | { ok: false; error: string };
+export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
+
+/**
+ * Everything one browser knows about its room. After a server restart the
+ * clients send this back and the room is rebuilt from their combined copies.
+ */
+export interface RestorePayload {
+  code: string;
+  playerId: string;
+  state: GameState;
+}
 
 export type SaveResult =
   | { ok: true; url: string; path: string }

@@ -23,7 +23,7 @@ npm run dev
 ```
 
 Open <http://localhost:3000>, type a name, press **Create a dungeon**, and share the room
-code. The first player in a room is the **facilitator**. It works with no API keys at all —
+code — clicking the code in the top bar copies an invite link. The first player in a room is the **facilitator**. It works with no API keys at all —
 the local generator takes over wherever the AI would be.
 
 ---
@@ -34,11 +34,12 @@ the local generator takes over wherever the AI would be.
 |--------|--------------|
 | **Join / Create** | Name, and either a room code or a new dungeon. Names are unique per room; a disconnect can be rejoined. |
 | **Character Forge** | Energy, pressure and satisfaction on 1–5, a few words about the sprint, optional keywords. The server sends that to OpenRouter and gets back a character: name, class, description, one special skill, one funny weakness, attack and support derived from your numbers. Portraits are emoji plus a CSS card by default; if `OPENROUTER_IMAGE_MODEL` is set, players can opt into slower generated image avatars with the toggle next to the forge button. |
-| **Topic Forge** | Up to six topics each, typed **good** / **bad** / **sad**, with an optional description and intensity. Everyone sees the count, only you see your own. |
+| **Topic Forge** | Up to six topics each, typed **good** / **bad** / **sad**, with an optional description and intensity. Press Enter in the title to add one straight away. Everyone sees the whole pile — titles only, never who wrote what — so duplicates get spotted early. Players tick **I'm done adding**; the party list shows a ✓ and the facilitator sees how many are done. |
 | **Generation** | The facilitator presses *Generate the dungeon*. The topics go to OpenRouter, which clusters them and returns a level. |
 | **The Dungeon** | A top-down map. Move with WASD, arrows, or by clicking. Bad and sad topics are enemies, good ones are power-ups lying on the floor. Walk over a power-up to collect its attack points for the party. Click an enemy to lock on. |
-| **Encounter** | When a majority of connected players locks onto the same enemy, movement pauses for everyone and a modal opens with the enemy, the original topics it came from, who is locked on, and a short D&D-style battle intro. Locked players, plus the facilitator, can write how the team wants to handle the issue, an optional owner, a review date, and how many attack points to spend. Submitting freezes the enemy and creates a short victory outro. |
-| **Victory Report** | Characters, topics, enemies, power-ups, treatments, points spent, what is still standing, and the action items — a game screen you can still paste into a wiki. |
+| **Encounter** | When a majority of connected players locks onto the same enemy — or the facilitator presses *Start this fight now* while locked on — movement pauses and a battle scroll opens with the enemy, the topics it came from and a short D&D-style intro. Then comes a two-minute **ideas round** (a soft countdown; the facilitator can add a minute): everyone puts **one idea** on the table and sees all of them, anonymously. The **oracle** can suggest three ideas or *take an idea further* into a concrete agreement. The facilitator can **kick** ideas or tick several and **merge** them into one. Locked players or the facilitator pick an idea with *Use as treatment*, add owner, review date and attack points, and strike. The ideas that were not chosen are kept on the result. |
+| **Soft timers** | In any phase the facilitator can start a 2, 5 or 10 minute countdown in the top bar. It is a nudge for the call, never a lock: nothing closes when it runs out, and it lapses when the phase changes. |
+| **Victory Report** | Opens with **one painted battle scene**: when the facilitator ends the raid, the server asks `OPENROUTER_IMAGE_MODEL` for an epic D&D painting of the whole party — built from everyone's hero name, class and look — shattering the enemies they froze while the ones still standing loom in the dark behind them (next sprint's fight). It takes about a minute and slides in when ready; anyone can download it, the facilitator can repaint. Then: characters, topics, enemies, power-ups, treatments, points spent, what is still standing, and the action items — a game screen you can still paste into a wiki. |
 
 ### Attack points instead of dot voting
 
@@ -78,7 +79,7 @@ The server binds to `process.env.PORT` (default `3000`) and `HOST` (default `0.0
 | `OPENROUTER_TEXT_MODEL` | no | Default text model, used when a room has not chosen another option. Defaults to `openai/gpt-4o-mini`. |
 | `OPENROUTER_MODEL` | no | Legacy alias for `OPENROUTER_TEXT_MODEL`; kept so old deployments still work. |
 | `OPENROUTER_MODEL_OPTIONS` | no | Comma-separated allowlist for the facilitator dropdown. Use `model-id\|Label` for nicer labels. |
-| `OPENROUTER_IMAGE_MODEL` | no | Optional paid avatar image model. Leave empty for local CSS/emoji portraits. Cheap starting point: `openai/gpt-image-2`. |
+| `OPENROUTER_IMAGE_MODEL` | no | Optional paid image model for avatar portraits (opt-in per player) and the one battle painting per raid on the victory report. Leave empty for emoji portraits and no painting. Cheap starting point: `openai/gpt-image-2`. |
 | `OPENROUTER_STORY_MODEL` | no | Optional cheap/fast model for fight intro and outro text. Defaults to `google/gemini-2.5-flash-lite`. Falls back to local text if unset or slow. |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | no | Attribution headers OpenRouter shows on its dashboard. |
 | `GITHUB_TOKEN` | only for saving | Fine-grained token with **Contents: Read and write**. |
@@ -97,7 +98,10 @@ can reach a log line or a player.
 The server calls `POST https://openrouter.ai/api/v1/chat/completions` with
 `response_format: json_object`, a system prompt describing the exact JSON shape, and a
 45-second timeout. Two calls exist: one per player for the character, one per room for the
-level. AI calls are rate limited to six per room per ten minutes.
+level. Dungeon generation is rate limited to six per room per ten minutes; character
+forging to five per player per ten minutes, so a full party can forge at the same time; oracle
+ideas in fights to twenty per room per ten minutes. Without a key the oracle falls back to a
+small local playbook of concrete countermeasures, matched to the enemy's theme.
 
 The facilitator can choose the room's text model from the server-side allowlist exposed by
 `OPENROUTER_MODEL_OPTIONS`. That selected model is used for both character generation and
@@ -210,9 +214,21 @@ health check on `/health`.
 
 The blueprint targets the `frankfurt` region — change it if you want to be elsewhere.
 
-On the free plan, instances sleep when idle and restart cold. Because rooms live in memory,
-a restart empties them: fine for a retro you run in one sitting, worth knowing before you
-leave a room open overnight. Empty rooms are swept after 15 minutes, idle ones after 8 hours.
+On the free plan, instances sleep after 15 idle minutes and may restart at any time. Two
+things soften that:
+
+* while a room is open, every browser pings `/health` every four minutes, so the instance
+  does not fall asleep in the middle of a retro (open the URL a minute before you start —
+  a cold start takes 30–60 seconds);
+* rooms live in memory, but every browser keeps its last copy. After a restart the clients
+  send that copy back on reconnect and the room is rebuilt: phase, dungeon, frozen enemies
+  and attack points from the freshest copy, each player's check-in and topics from their
+  own browser. Open fights and locks are dropped (just click again) and generated portrait
+  images fall back to the emoji card.
+
+Players who lose their tab can also join again with the same name — an offline player's
+seat is handed back instead of being refused as a duplicate. Empty rooms are swept after
+15 minutes, idle ones after 8 hours.
 
 ---
 
@@ -222,7 +238,7 @@ leave a room open overnight. Empty rooms are swept after 15 minutes, idle ones a
 npm test
 ```
 
-91 tests, no network access and no real commits or completions:
+120 tests, no network access and no real commits or completions:
 
 | File | Covers |
 |------|--------|
@@ -242,8 +258,13 @@ npm test
 * Text is sanitised on the server and the client builds DOM nodes only — `innerHTML` is
   never used — so script injection has no surface, including for AI output.
 * Rate limits per socket on joins, text and actions; per room on AI calls and saves.
-* Movement is broadcast on a lightweight channel rather than a full state push, and
-  positions are clamped to the map server-side.
+* Movement is broadcast on a lightweight channel rather than a full state push, only sent
+  while a player actually moves, and clamped to the map server-side.
+* State pushes are batched per room (25 ms) and skipped for players whose view did not
+  change. Browsers patch the screen in place instead of rebuilding it, so nobody's typing,
+  focus or click is interrupted by someone else's action.
+* A failing handler answers with an error instead of taking the process — and every room —
+  down with it. Portrait images are served over cached HTTP, never inside state pushes.
 * Connection status, disconnect markers on the map, automatic rejoin from `sessionStorage`,
   and every failure surfaced as a toast rather than silence.
 
