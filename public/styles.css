@@ -209,6 +209,21 @@ a.link {
   color: var(--parchment-dim);
 }
 
+.topbar__restart {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--blood);
+  background: rgba(255, 105, 80, 0.08);
+  border: 1px solid var(--blood);
+  border-radius: 8px;
+  padding: 0.28rem 0.55rem;
+  cursor: pointer;
+}
+
+.topbar__restart:hover {
+  filter: brightness(1.12);
+}
+
 .conn {
   font-size: 0.9rem;
   line-height: 1;

@@ -207,3 +207,28 @@ export function connectedPlayers(room: Room): PlayerRecord[] {
 export function topicsOf(room: Room, playerId: string): Topic[] {
   return [...room.topics.values()].filter((topic) => room.topicAuthors.get(topic.id) === playerId);
 }
+
+export function restartCampaign(room: Room, now = Date.now()): void {
+  room.createdAt = now;
+  room.lastActivity = now;
+  room.phase = 'forge';
+  room.topics.clear();
+  room.topicAuthors.clear();
+  room.level = null;
+  room.encounter = null;
+  room.resolutions = [];
+  room.attackCollected = 0;
+  room.attackSpent = 0;
+  room.generation = { busy: false, message: null };
+  room.save = { status: 'idle', url: null, message: null };
+
+  const players = [...room.players.values()].sort((a, b) => a.joinedAt - b.joinedAt);
+  players.forEach((player, index) => {
+    player.ready = false;
+    player.checkIn = null;
+    player.character = null;
+    player.position = spawnPoint(index);
+    player.lockedEnemyId = null;
+    player.lastSeen = now;
+  });
+}

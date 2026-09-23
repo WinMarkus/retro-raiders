@@ -1,7 +1,7 @@
 import { PHASE_LABEL } from '../shared/constants.js';
 import type { GameState } from '../shared/types.js';
 import { h, mount } from './dom.js';
-import { attachSocketLifecycle, leave, notify, onChange, store } from './store.js';
+import { act, attachSocketLifecycle, leave, notify, onChange, store } from './store.js';
 import { renderForge } from './views/forge.js';
 import { renderJoin } from './views/join.js';
 import { renderLevel, stopLevelLoop } from './views/level.js';
@@ -10,6 +10,12 @@ import { renderVictory } from './views/victory.js';
 import { panel } from './views/ui.js';
 
 const getState = (): GameState | null => store.state;
+
+function restartCampaign(): void {
+  const ok = window.confirm('Start a new campaign for this room? This clears characters, topics, dungeon and results.');
+  if (!ok) return;
+  void act('campaign:restart');
+}
 
 function topbar(state: GameState | null): HTMLElement {
   return h(
@@ -23,6 +29,14 @@ function topbar(state: GameState | null): HTMLElement {
           h('span', { class: 'room-code', title: 'Room code', text: state.code }),
           h('span', { class: 'phase-label', text: PHASE_LABEL[state.phase] }),
           h('span', { class: 'party-count', text: `${state.players.filter((p) => p.connected).length} online` }),
+          state.canRestartCampaign
+            ? h('button', {
+                class: 'topbar__restart',
+                type: 'button',
+                text: 'Start new campaign',
+                onClick: restartCampaign,
+              })
+            : null,
         )
       : null,
     h('span', {

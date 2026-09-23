@@ -292,6 +292,32 @@ describe('the flow', () => {
     expect((await emit<ActionResult>(host, 'enemy:lock', { enemyId: '../../etc/passwd' })).ok).toBe(false);
     expect((await emit<ActionResult>(host, 'enemy:lock', { enemyId: 'enemy-nope-9' })).ok).toBe(false);
   });
+
+  it('lets only Markus restart the whole campaign in the same room', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const markus = await connect();
+    await emit<JoinResult>(markus, 'room:join', { name: 'Markus', code });
+
+    const denied = await emit<ActionResult>(host, 'campaign:restart');
+    expect(denied.ok).toBe(false);
+
+    await reachLevel(host, TOPICS);
+    const before = await nextState(markus, (state) => state.phase === 'level' && state.topicCount > 0);
+    expect(before.canRestartCampaign).toBe(true);
+
+    inbox.set(host, []);
+    const restarted = await emit<ActionResult>(markus, 'campaign:restart');
+    expect(restarted.ok).toBe(true);
+
+    const after = await nextState(host, (state) => state.phase === 'forge' && state.topicCount === 0);
+    expect(after.code).toBe(code);
+    expect(after.players.map((player) => player.name)).toEqual(['Ada', 'Markus']);
+    expect(after.players.every((player) => player.character === null)).toBe(true);
+    expect(after.level).toBeNull();
+    expect(after.encounter).toBeNull();
+    expect(after.resolutions).toEqual([]);
+    expect(after.attack).toEqual({ available: 0, spent: 0, collected: 0 });
+  });
 });
 
 describe('saving', () => {

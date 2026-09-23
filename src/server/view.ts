@@ -16,6 +16,10 @@ export function canSave(playerName: string): boolean {
   return playerName === SAVE_PLAYER_NAME;
 }
 
+export function canRestartCampaign(playerName: string): boolean {
+  return playerName === SAVE_PLAYER_NAME;
+}
+
 export function buildState(room: Room, playerId: string): GameState {
   const me = room.players.get(playerId);
   const selectedModel = selectOpenRouterModel(room.aiTextModel);
@@ -72,5 +76,6 @@ export function buildState(room: Room, playerId: string): GameState {
     },
     githubConfigured: isGithubConfigured(),
     canSave: canSave(me?.name ?? ''),
+    canRestartCampaign: canRestartCampaign(me?.name ?? ''),
   };
 }

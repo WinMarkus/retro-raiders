@@ -178,6 +178,7 @@ export interface GameState {
   };
   githubConfigured: boolean;
   canSave: boolean;
+  canRestartCampaign: boolean;
 }
 
 export type JoinResult =

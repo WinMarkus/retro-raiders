@@ -32,9 +32,9 @@ import {
 } from './openrouter.js';
 import { RATE_LIMITS, rateLimit } from './ratelimit.js';
 import { buildCommitMessage, buildSavePath, buildSnapshot } from './snapshot.js';
-import { isFacilitator, topicsOf, type PlayerRecord, type Room, type RoomStore } from './state.js';
+import { isFacilitator, restartCampaign, topicsOf, type PlayerRecord, type Room, type RoomStore } from './state.js';
 import { generateEncounterStory, generateVictoryStory } from './stories.js';
-import { SAVE_PLAYER_NAME, buildState } from './view.js';
+import { SAVE_PLAYER_NAME, buildState, canRestartCampaign } from './view.js';
 import {
   clampPoint,
   isId,
@@ -376,6 +376,18 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       pushState(io, found.room);
     });
 
+    socket.on('campaign:restart', (_payload: unknown, ack: Ack<ActionResult>) => {
+      const found = membership();
+      if (!found) return fail(ack, 'You are not in this room any more.');
+      if (!canRestartCampaign(found.player.name)) {
+        return fail(ack, 'Only the player named Markus can start a new campaign.');
+      }
+      restartCampaign(found.room);
+      reply(ack, { ok: true });
+      pushState(io, found.room);
+      toast(io, found.room, 'A new campaign begins. Back to the character forge.');
+    });
+
     /* ------------------------------------------------------- the level -- */
 
     socket.on('player:move', (payload: unknown) => {
@@ -420,7 +432,9 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       if (outcome.opened) {
         const enemy = findEnemy(found.room, enemyId);
         if (enemy && found.room.encounter) {
+          const openedAt = found.room.encounter.openedAt;
           const story = await generateEncounterStory(found.room, enemy, readOpenRouterStoryConfig());
+          if (found.room.encounter?.enemyId !== enemy.id || found.room.encounter.openedAt !== openedAt) return;
           found.room.encounter.story = story;
           pushState(io, found.room);
           toast(io, found.room, story);
