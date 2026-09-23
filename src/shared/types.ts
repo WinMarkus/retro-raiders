@@ -179,6 +179,7 @@ export interface GameState {
   githubConfigured: boolean;
   canSave: boolean;
   canRestartCampaign: boolean;
+  canStartNewRoom: boolean;
 }
 
 export type JoinResult =

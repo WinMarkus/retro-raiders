@@ -77,5 +77,6 @@ export function buildState(room: Room, playerId: string): GameState {
     githubConfigured: isGithubConfigured(),
     canSave: canSave(me?.name ?? ''),
     canRestartCampaign: canRestartCampaign(me?.name ?? ''),
+    canStartNewRoom: canRestartCampaign(me?.name ?? ''),
   };
 }

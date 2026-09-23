@@ -95,6 +95,11 @@ export async function joinRoom(name: string, code: string): Promise<void> {
   handleJoin(result);
 }
 
+export async function createFreshRoom(): Promise<void> {
+  const result = await call<JoinResult>('room:create:fresh');
+  handleJoin(result);
+}
+
 function handleJoin(result: JoinResult): void {
   if (result.ok) {
     saveSession({ code: result.code, playerId: result.playerId });
@@ -180,5 +185,5 @@ export function attachSocketLifecycle(): void {
 
 export function leave(): void {
   clearSession();
-  window.location.href = window.location.pathname;
+  window.location.href = '/';
 }

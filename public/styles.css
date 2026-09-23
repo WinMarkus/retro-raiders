@@ -224,6 +224,12 @@ a.link {
   filter: brightness(1.12);
 }
 
+.topbar__restart--room {
+  color: var(--gold);
+  border-color: var(--gold);
+  background: rgba(242, 190, 83, 0.08);
+}
+
 .conn {
   font-size: 0.9rem;
   line-height: 1;

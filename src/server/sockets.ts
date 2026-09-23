@@ -113,6 +113,24 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
       void socket.join(room.code);
     };
 
+    const detachCurrent = (): void => {
+      const code = socket.data.roomCode as string | undefined;
+      const playerId = socket.data.playerId as string | undefined;
+      if (!code || !playerId) return;
+      const room = store.get(code);
+      const player = room?.players.get(playerId);
+      if (room && player) {
+        player.connected = false;
+        player.socketId = null;
+        player.lastSeen = Date.now();
+        room.lastActivity = Date.now();
+        pushState(io, room);
+      }
+      void socket.leave(code);
+      delete socket.data.roomCode;
+      delete socket.data.playerId;
+    };
+
     /* -------------------------------------------------------- joining -- */
 
     socket.on('room:create', (payload: unknown, ack: Ack<JoinResult>) => {
@@ -126,6 +144,28 @@ export function registerSocketHandlers(io: Server, store: RoomStore): void {
         reply(ack, { ok: false, error: 'Enter a player name to join the raid.' });
         return;
       }
+      const room = store.create();
+      const result = store.addPlayer(room, name, socket.id);
+      if (!result.ok) {
+        store.delete(room.code);
+        reply(ack, { ok: false, error: 'Could not create the room. Try again.' });
+        return;
+      }
+      attach(room, result.player);
+      reply(ack, { ok: true, code: room.code, playerId: result.player.id });
+      pushState(io, room);
+    });
+
+    socket.on('room:create:fresh', (_payload: unknown, ack: Ack<JoinResult>) => {
+      const found = membership();
+      if (!found) return reply(ack, { ok: false, error: 'You are not in this room any more.' });
+      if (!canRestartCampaign(found.player.name)) {
+        return reply(ack, { ok: false, error: 'Only the player named Markus can start a new room.' });
+      }
+
+      const name = found.player.name;
+      detachCurrent();
+
       const room = store.create();
       const result = store.addPlayer(room, name, socket.id);
       if (!result.ok) {

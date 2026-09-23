@@ -318,6 +318,32 @@ describe('the flow', () => {
     expect(after.resolutions).toEqual([]);
     expect(after.attack).toEqual({ available: 0, spent: 0, collected: 0 });
   });
+
+  it('lets Markus start an entirely new room without the old players', async () => {
+    const { socket: host, code } = await joinedRoom('Ada');
+    const markus = await connect();
+    const joined = await emit<JoinResult>(markus, 'room:join', { name: 'Markus', code });
+    expect(joined.ok).toBe(true);
+
+    const denied = await emit<JoinResult>(host, 'room:create:fresh');
+    expect(denied.ok).toBe(false);
+
+    inbox.set(host, []);
+    const fresh = await emit<JoinResult>(markus, 'room:create:fresh');
+    expect(fresh.ok).toBe(true);
+    if (!fresh.ok) throw new Error(fresh.error);
+    expect(fresh.code).not.toBe(code);
+
+    const newRoom = await nextState(markus, (state) => state.code === fresh.code);
+    expect(newRoom.players.map((player) => player.name)).toEqual(['Markus']);
+    expect(newRoom.phase).toBe('forge');
+
+    const oldRoom = await nextState(host, (state) => state.code === code);
+    expect(oldRoom.players.map((player) => `${player.name}:${player.connected}`)).toEqual([
+      'Ada:true',
+      'Markus:false',
+    ]);
+  });
 });
 
 describe('saving', () => {

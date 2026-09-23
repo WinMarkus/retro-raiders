@@ -1,7 +1,7 @@
 import { PHASE_LABEL } from '../shared/constants.js';
 import type { GameState } from '../shared/types.js';
 import { h, mount } from './dom.js';
-import { act, attachSocketLifecycle, leave, notify, onChange, store } from './store.js';
+import { act, attachSocketLifecycle, createFreshRoom, leave, notify, onChange, store } from './store.js';
 import { renderForge } from './views/forge.js';
 import { renderJoin } from './views/join.js';
 import { renderLevel, stopLevelLoop } from './views/level.js';
@@ -15,6 +15,12 @@ function restartCampaign(): void {
   const ok = window.confirm('Start a new campaign for this room? This clears characters, topics, dungeon and results.');
   if (!ok) return;
   void act('campaign:restart');
+}
+
+function startNewRoom(): void {
+  const ok = window.confirm('Start an entirely new room? The current players will stay in the old room.');
+  if (!ok) return;
+  void createFreshRoom();
 }
 
 function topbar(state: GameState | null): HTMLElement {
@@ -35,6 +41,14 @@ function topbar(state: GameState | null): HTMLElement {
                 type: 'button',
                 text: 'Start new campaign',
                 onClick: restartCampaign,
+              })
+            : null,
+          state.canStartNewRoom
+            ? h('button', {
+                class: 'topbar__restart topbar__restart--room',
+                type: 'button',
+                text: 'Start new room',
+                onClick: startNewRoom,
               })
             : null,
         )
